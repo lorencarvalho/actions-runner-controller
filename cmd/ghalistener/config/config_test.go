@@ -71,6 +71,7 @@ func TestConfigValidation(t *testing.T) {
 
 		config := Config{
 			ConfigureUrl:                "https://github.com/test/repo",
+			Token:                       "test-token",
 			EphemeralRunnerSetNamespace: "test-namespace",
 			EphemeralRunnerSetName:      "test-runner-set",
 			RunnerScaleSetId:            123,
@@ -89,6 +90,7 @@ func TestConfigValidation(t *testing.T) {
 
 		baseConfig := Config{
 			ConfigureUrl:                "https://github.com/test/repo",
+			Token:                       "test-token",
 			EphemeralRunnerSetNamespace: "test-namespace",
 			EphemeralRunnerSetName:      "test-runner-set",
 			RunnerScaleSetId:            123,
@@ -135,6 +137,7 @@ func TestConfigValidation(t *testing.T) {
 
 		baseConfig := Config{
 			ConfigureUrl:                "https://github.com/test/repo",
+			Token:                       "test-token",
 			EphemeralRunnerSetNamespace: "test-namespace",
 			EphemeralRunnerSetName:      "test-runner-set",
 			RunnerScaleSetId:            123,
@@ -149,12 +152,13 @@ func TestConfigValidation(t *testing.T) {
 			shouldError   bool
 			errorContains string
 		}{
-			{"Valid 0 (no limit)", 0, false, ""},
+			{"Valid -1 (no limit)", -1, false, ""},
+			{"Valid 0", 0, false, ""},
 			{"Valid 1", 1, false, ""},
 			{"Valid 50", 50, false, ""},
 			{"Valid 1000", 1000, false, ""},
-			{"Invalid negative", -1, true, "MaxJobsPerAcquisition must be greater than or equal to 0"},
-			{"Invalid -100", -100, true, "MaxJobsPerAcquisition must be greater than or equal to 0"},
+			{"Invalid -2", -2, true, "MaxJobsPerAcquisition must be greater than or equal to -1"},
+			{"Invalid -100", -100, true, "MaxJobsPerAcquisition must be greater than or equal to -1"},
 		}
 
 		for _, tc := range testCases {
@@ -180,6 +184,7 @@ func TestConfigValidation(t *testing.T) {
 
 		baseConfig := Config{
 			ConfigureUrl:                "https://github.com/test/repo",
+			Token:                       "test-token",
 			EphemeralRunnerSetNamespace: "test-namespace",
 			EphemeralRunnerSetName:      "test-runner-set",
 			RunnerScaleSetId:            123,

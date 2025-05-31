@@ -863,7 +863,7 @@ func TestListener_acquireAvailableJobs(t *testing.T) {
 		config := Config{
 			ScaleSetID:        1,
 			Metrics:           metrics.Discard,
-			MaxJobsPercentage: intPtr(0), // Standby mode - acquire no jobs
+			MaxJobsPercentage: 0, // Standby mode - acquire no jobs
 		}
 
 		client := listenermocks.NewClient(t)
@@ -1372,10 +1372,10 @@ func TestConfigDefaults(t *testing.T) {
 		t.Parallel()
 
 		config := Config{
-			Client:     listenermocks.NewClient(t),
-			ScaleSetID: 1,
-			Metrics:    metrics.Discard,
-			// MaxJobsPercentage not set (nil)
+			Client:            listenermocks.NewClient(t),
+			ScaleSetID:        1,
+			Metrics:           metrics.Discard,
+			MaxJobsPercentage: 100, // Default value
 		}
 
 		l, err := New(config)
@@ -1390,7 +1390,7 @@ func TestConfigDefaults(t *testing.T) {
 			Client:            listenermocks.NewClient(t),
 			ScaleSetID:        1,
 			Metrics:           metrics.Discard,
-			MaxJobsPercentage: intPtr(0), // Explicitly set to 0
+			MaxJobsPercentage: 0, // Explicitly set to 0
 		}
 
 		l, err := New(config)
@@ -1405,7 +1405,7 @@ func TestConfigDefaults(t *testing.T) {
 			Client:            listenermocks.NewClient(t),
 			ScaleSetID:        1,
 			Metrics:           metrics.Discard,
-			MaxJobsPercentage: intPtr(50), // Explicitly set to 50
+			MaxJobsPercentage: 50, // Explicitly set to 50
 		}
 
 		l, err := New(config)
@@ -1413,18 +1413,18 @@ func TestConfigDefaults(t *testing.T) {
 		assert.Equal(t, 50, l.maxJobsPercentage, "Should respect explicit value")
 	})
 
-	t.Run("Default MaxJobsPerAcquisition is 0", func(t *testing.T) {
+	t.Run("Default MaxJobsPerAcquisition is -1", func(t *testing.T) {
 		t.Parallel()
 
 		config := Config{
-			Client:     listenermocks.NewClient(t),
-			ScaleSetID: 1,
-			Metrics:    metrics.Discard,
-			// MaxJobsPerAcquisition not set (nil)
+			Client:                listenermocks.NewClient(t),
+			ScaleSetID:            1,
+			Metrics:               metrics.Discard,
+			MaxJobsPerAcquisition: -1, // Default value (no limit)
 		}
 
 		l, err := New(config)
 		require.NoError(t, err)
-		assert.Equal(t, 0, l.maxJobsPerAcquisition, "Should default to 0 (no limit) when not set")
+		assert.Equal(t, -1, l.maxJobsPerAcquisition, "Should default to -1 (no limit) when not set")
 	})
 }

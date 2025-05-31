@@ -79,8 +79,8 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("MaxJobsPercentage must be between 0 and 100")
 	}
 
-	if c.MaxJobsPerAcquisition < 0 {
-		return fmt.Errorf("MaxJobsPerAcquisition must be greater than or equal to 0")
+	if c.MaxJobsPerAcquisition < -1 {
+		return fmt.Errorf("MaxJobsPerAcquisition must be greater than or equal to -1 (-1 means no limit)")
 	}
 
 	hasToken := len(c.Token) > 0

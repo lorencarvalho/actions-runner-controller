@@ -97,8 +97,8 @@ spec:
   {{- end }}
 
   {{- if or (kindIs "int64" .Values.maxJobsPerAcquisition) (kindIs "float64" .Values.maxJobsPerAcquisition) }}
-    {{- if lt (.Values.maxJobsPerAcquisition | int) 0 }}
-      {{- fail "maxJobsPerAcquisition has to be greater or equal to 0" }}
+    {{- if lt (.Values.maxJobsPerAcquisition | int) -1 }}
+      {{- fail "maxJobsPerAcquisition has to be greater or equal to -1 (-1 means no limit)" }}
     {{- end }}
   maxJobsPerAcquisition: {{ .Values.maxJobsPerAcquisition | int }}
   {{- end }}

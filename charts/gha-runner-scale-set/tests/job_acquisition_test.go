@@ -44,8 +44,8 @@ func TestTemplateRenderedAutoScalingRunnerSet_JobAcquisitionSettings(t *testing.
 
 	assert.Equal(t, namespaceName, ars.Namespace)
 	assert.Equal(t, releaseName, ars.Name)
-	assert.Equal(t, 17, *ars.Spec.MaxJobsPercentage, "MaxJobsPercentage should be 17")
-	assert.Equal(t, 50, *ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should be 50")
+	assert.Equal(t, 17, ars.Spec.MaxJobsPercentage, "MaxJobsPercentage should be 17")
+	assert.Equal(t, 50, ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should be 50")
 }
 
 func TestTemplateRenderedAutoScalingRunnerSet_JobAcquisitionDefaults(t *testing.T) {
@@ -74,9 +74,10 @@ func TestTemplateRenderedAutoScalingRunnerSet_JobAcquisitionDefaults(t *testing.
 	var ars v1alpha1.AutoscalingRunnerSet
 	helm.UnmarshalK8SYaml(t, output, &ars)
 
-	// When not specified, these fields should be nil (not set in the spec)
-	assert.Nil(t, ars.Spec.MaxJobsPercentage, "MaxJobsPercentage should be nil when not specified")
-	assert.Nil(t, ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should be nil when not specified")
+	// With the new non-pointer design, the CRD defaults should be used
+	// MaxJobsPercentage should default to 100, MaxJobsPerAcquisition should default to -1
+	assert.Equal(t, 100, ars.Spec.MaxJobsPercentage, "MaxJobsPercentage should default to 100")
+	assert.Equal(t, -1, ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should default to -1")
 }
 
 func TestTemplateRenderedAutoScalingRunnerSet_MaxJobsPercentageValidationError(t *testing.T) {
@@ -158,7 +159,7 @@ func TestTemplateRenderedAutoScalingRunnerSet_MaxJobsPerAcquisitionValidationErr
 
 	_, err = helm.RenderTemplateE(t, options, helmChartPath, releaseName, []string{"templates/autoscalingrunnerset.yaml"})
 	require.Error(t, err)
-	assert.ErrorContains(t, err, "maxJobsPerAcquisition has to be greater or equal to 0")
+	assert.ErrorContains(t, err, "maxJobsPerAcquisition has to be greater or equal to -1")
 }
 
 func TestTemplateRenderedAutoScalingRunnerSet_JobAcquisitionEdgeCases(t *testing.T) {
@@ -175,33 +176,39 @@ func TestTemplateRenderedAutoScalingRunnerSet_JobAcquisitionEdgeCases(t *testing
 		name                  string
 		maxJobsPercentage     string
 		maxJobsPerAcquisition string
-		expectedPercentage    *int
-		expectedAcquisition   *int
+		expectedPercentage    int
+		expectedAcquisition   int
 	}{
 		{
 			name:                "Zero percentage (valid)",
 			maxJobsPercentage:   "0",
-			expectedPercentage:  intPtr(0),
-			expectedAcquisition: nil,
+			expectedPercentage:  0,
+			expectedAcquisition: -1, // Should use default when not set
 		},
 		{
 			name:                  "Zero acquisition (valid)",
 			maxJobsPerAcquisition: "0",
-			expectedPercentage:    nil,
-			expectedAcquisition:   intPtr(0),
+			expectedPercentage:    100, // Should use default when not set
+			expectedAcquisition:   0,
 		},
 		{
 			name:                "Maximum percentage",
 			maxJobsPercentage:   "100",
-			expectedPercentage:  intPtr(100),
-			expectedAcquisition: nil,
+			expectedPercentage:  100,
+			expectedAcquisition: -1, // Should use default when not set
 		},
 		{
 			name:                  "Both set to valid values",
 			maxJobsPercentage:     "25",
 			maxJobsPerAcquisition: "200",
-			expectedPercentage:    intPtr(25),
-			expectedAcquisition:   intPtr(200),
+			expectedPercentage:    25,
+			expectedAcquisition:   200,
+		},
+		{
+			name:                  "No limit acquisition (-1)",
+			maxJobsPerAcquisition: "-1",
+			expectedPercentage:    100, // Should use default when not set
+			expectedAcquisition:   -1,
 		},
 	}
 
@@ -234,17 +241,8 @@ func TestTemplateRenderedAutoScalingRunnerSet_JobAcquisitionEdgeCases(t *testing
 			var ars v1alpha1.AutoscalingRunnerSet
 			helm.UnmarshalK8SYaml(t, output, &ars)
 
-			if tc.expectedPercentage != nil {
-				assert.Equal(t, *tc.expectedPercentage, *ars.Spec.MaxJobsPercentage, "MaxJobsPercentage should match expected value")
-			} else {
-				assert.Nil(t, ars.Spec.MaxJobsPercentage, "MaxJobsPercentage should be nil when not set")
-			}
-
-			if tc.expectedAcquisition != nil {
-				assert.Equal(t, *tc.expectedAcquisition, *ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should match expected value")
-			} else {
-				assert.Nil(t, ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should be nil when not set")
-			}
+			assert.Equal(t, tc.expectedPercentage, ars.Spec.MaxJobsPercentage, "MaxJobsPercentage should match expected value")
+			assert.Equal(t, tc.expectedAcquisition, ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should match expected value")
 		})
 	}
 }
@@ -265,14 +263,14 @@ func TestTemplateRenderedAutoScalingRunnerSet_RealWorldJobAcquisitionScenarios(t
 		acquisition         string
 		description         string
 		expectedPercentage  int
-		expectedAcquisition *int
+		expectedAcquisition int
 	}{
 		{
 			name:                "Six cluster deployment - 1/6th each",
 			percentage:          "17",
 			description:         "Each of 6 clusters gets ~17% (1/6) of available jobs",
 			expectedPercentage:  17,
-			expectedAcquisition: nil,
+			expectedAcquisition: -1, // Default when not set
 		},
 		{
 			name:                "Conservative limit - 20% with 100 job cap",
@@ -280,7 +278,7 @@ func TestTemplateRenderedAutoScalingRunnerSet_RealWorldJobAcquisitionScenarios(t
 			acquisition:         "100",
 			description:         "Take 20% of jobs but never more than 100 at once",
 			expectedPercentage:  20,
-			expectedAcquisition: intPtr(100),
+			expectedAcquisition: 100,
 		},
 		{
 			name:                "Large deployment - 5% with high cap",
@@ -288,7 +286,7 @@ func TestTemplateRenderedAutoScalingRunnerSet_RealWorldJobAcquisitionScenarios(t
 			acquisition:         "500",
 			description:         "Large deployment with many clusters, each takes 5%",
 			expectedPercentage:  5,
-			expectedAcquisition: intPtr(500),
+			expectedAcquisition: 500,
 		},
 	}
 
@@ -319,15 +317,8 @@ func TestTemplateRenderedAutoScalingRunnerSet_RealWorldJobAcquisitionScenarios(t
 			var ars v1alpha1.AutoscalingRunnerSet
 			helm.UnmarshalK8SYaml(t, output, &ars)
 
-			require.NotNil(t, ars.Spec.MaxJobsPercentage, "MaxJobsPercentage should be set")
-			assert.Equal(t, tc.expectedPercentage, *ars.Spec.MaxJobsPercentage, tc.description)
-
-			if tc.expectedAcquisition != nil {
-				require.NotNil(t, ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should be set")
-				assert.Equal(t, *tc.expectedAcquisition, *ars.Spec.MaxJobsPerAcquisition, tc.description)
-			} else {
-				assert.Nil(t, ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should be nil when not set")
-			}
+			assert.Equal(t, tc.expectedPercentage, ars.Spec.MaxJobsPercentage, tc.description)
+			assert.Equal(t, tc.expectedAcquisition, ars.Spec.MaxJobsPerAcquisition, tc.description)
 		})
 	}
 }

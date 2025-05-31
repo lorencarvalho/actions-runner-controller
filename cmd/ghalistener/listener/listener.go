@@ -48,9 +48,10 @@ type Config struct {
 	Metrics    metrics.Publisher
 
 	// Job acquisition control
-	// Use pointers to distinguish between "not set" (nil) and "explicitly set to 0"
-	MaxJobsPerAcquisition *int
-	MaxJobsPercentage     *int
+	// MaxJobsPercentage: 0-100, defaults to 100 (acquire all available jobs)
+	// MaxJobsPerAcquisition: -1 means no limit, 0 means acquire no jobs, >0 is the absolute limit
+	MaxJobsPerAcquisition int
+	MaxJobsPercentage     int
 }
 
 func (c *Config) Validate() error {
@@ -69,11 +70,11 @@ func (c *Config) Validate() error {
 	if c.MaxRunners > 0 && c.MinRunners > c.MaxRunners {
 		return errors.New("minRunners must be less than or equal to maxRunners")
 	}
-	if c.MaxJobsPercentage != nil && (*c.MaxJobsPercentage < 0 || *c.MaxJobsPercentage > 100) {
+	if c.MaxJobsPercentage < 0 || c.MaxJobsPercentage > 100 {
 		return errors.New("maxJobsPercentage must be between 0 and 100")
 	}
-	if c.MaxJobsPerAcquisition != nil && *c.MaxJobsPerAcquisition < 0 {
-		return errors.New("maxJobsPerAcquisition must be greater than or equal to 0")
+	if c.MaxJobsPerAcquisition < -1 {
+		return errors.New("maxJobsPerAcquisition must be greater than or equal to -1 (-1 means no limit)")
 	}
 	return nil
 }
@@ -103,25 +104,14 @@ func New(config Config) (*Listener, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	// Set defaults for job acquisition control
-	maxJobsPercentage := 100 // Default to 100% for backward compatibility
-	if config.MaxJobsPercentage != nil {
-		maxJobsPercentage = *config.MaxJobsPercentage
-	}
-
-	maxJobsPerAcquisition := 0 // Default to no limit
-	if config.MaxJobsPerAcquisition != nil {
-		maxJobsPerAcquisition = *config.MaxJobsPerAcquisition
-	}
-
 	listener := &Listener{
 		scaleSetID:            config.ScaleSetID,
 		client:                config.Client,
 		logger:                config.Logger,
 		metrics:               metrics.Discard,
 		maxCapacity:           config.MaxRunners,
-		maxJobsPerAcquisition: maxJobsPerAcquisition,
-		maxJobsPercentage:     maxJobsPercentage,
+		maxJobsPerAcquisition: config.MaxJobsPerAcquisition,
+		maxJobsPercentage:     config.MaxJobsPercentage,
 	}
 
 	if config.Metrics != nil {
@@ -521,8 +511,8 @@ func calculateJobLimitWithParams(totalJobs, maxJobsPercentage, maxJobsPerAcquisi
 		limit = percentageLimit
 	}
 
-	// Apply absolute limit if set and it's more restrictive
-	if maxJobsPerAcquisition > 0 && limit > maxJobsPerAcquisition {
+	// Apply absolute limit if set (not -1) and it's more restrictive
+	if maxJobsPerAcquisition >= 0 && limit > maxJobsPerAcquisition {
 		limit = maxJobsPerAcquisition
 	}
 

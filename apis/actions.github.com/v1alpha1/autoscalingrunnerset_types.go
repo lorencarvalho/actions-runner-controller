@@ -90,11 +90,12 @@ type AutoscalingRunnerSetSpec struct {
 	// +kubebuilder:default:=100
 	// +kubebuilder:validation:Minimum:=0
 	// +kubebuilder:validation:Maximum:=100
-	MaxJobsPercentage *int `json:"maxJobsPercentage,omitempty"`
+	MaxJobsPercentage int `json:"maxJobsPercentage,omitempty"`
 
 	// +optional
-	// +kubebuilder:validation:Minimum:=0
-	MaxJobsPerAcquisition *int `json:"maxJobsPerAcquisition,omitempty"`
+	// +kubebuilder:default:=-1
+	// +kubebuilder:validation:Minimum:=-1
+	MaxJobsPerAcquisition int `json:"maxJobsPerAcquisition,omitempty"`
 }
 
 type GitHubServerTLSConfig struct {

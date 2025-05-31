@@ -39,14 +39,14 @@ func Read(path string) (Config, error) {
 		return Config{}, fmt.Errorf("failed to decode config: %w", err)
 	}
 
-	if err := config.validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		return Config{}, fmt.Errorf("failed to validate config: %w", err)
 	}
 
 	return config, nil
 }
 
-func (c *Config) validate() error {
+func (c *Config) Validate() error {
 	if len(c.ConfigureUrl) == 0 {
 		return fmt.Errorf("GitHubConfigUrl is not provided")
 	}
@@ -61,6 +61,14 @@ func (c *Config) validate() error {
 
 	if c.MaxRunners < c.MinRunners {
 		return fmt.Errorf("MinRunners '%d' cannot be greater than MaxRunners '%d'", c.MinRunners, c.MaxRunners)
+	}
+
+	if c.MaxJobsPercentage < 0 || c.MaxJobsPercentage > 100 {
+		return fmt.Errorf("MaxJobsPercentage must be between 0 and 100")
+	}
+
+	if c.MaxJobsPerAcquisition < -1 {
+		return fmt.Errorf("MaxJobsPerAcquisition must be greater than or equal to -1 (-1 means no limit)")
 	}
 
 	hasToken := len(c.Token) > 0

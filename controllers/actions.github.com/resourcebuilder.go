@@ -81,20 +81,14 @@ func (b *ResourceBuilder) newAutoScalingListener(autoscalingRunnerSet *v1alpha1.
 
 	effectiveMinRunners := 0
 	effectiveMaxRunners := math.MaxInt32
-	effectiveMaxJobsPercentage := 100   // Default value
-	effectiveMaxJobsPerAcquisition := 0 // Default value (no limit)
+	effectiveMaxJobsPercentage := autoscalingRunnerSet.Spec.MaxJobsPercentage         // Uses default from CRD (100)
+	effectiveMaxJobsPerAcquisition := autoscalingRunnerSet.Spec.MaxJobsPerAcquisition // Uses default from CRD (-1)
 
 	if autoscalingRunnerSet.Spec.MaxRunners != nil {
 		effectiveMaxRunners = *autoscalingRunnerSet.Spec.MaxRunners
 	}
 	if autoscalingRunnerSet.Spec.MinRunners != nil {
 		effectiveMinRunners = *autoscalingRunnerSet.Spec.MinRunners
-	}
-	if autoscalingRunnerSet.Spec.MaxJobsPercentage != nil {
-		effectiveMaxJobsPercentage = *autoscalingRunnerSet.Spec.MaxJobsPercentage
-	}
-	if autoscalingRunnerSet.Spec.MaxJobsPerAcquisition != nil {
-		effectiveMaxJobsPerAcquisition = *autoscalingRunnerSet.Spec.MaxJobsPerAcquisition
 	}
 
 	labels := b.mergeLabels(autoscalingRunnerSet.Labels, map[string]string{

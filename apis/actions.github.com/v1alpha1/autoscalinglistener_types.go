@@ -55,7 +55,8 @@ type AutoscalingListenerSpec struct {
 	// +kubebuilder:validation:Maximum:=100
 	MaxJobsPercentage int `json:"maxJobsPercentage,omitempty"`
 
-	// +kubebuilder:validation:Minimum:=0
+	// +kubebuilder:default:=-1
+	// +kubebuilder:validation:Minimum:=-1
 	MaxJobsPerAcquisition int `json:"maxJobsPerAcquisition,omitempty"`
 
 	// Required

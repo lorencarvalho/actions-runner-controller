@@ -89,6 +89,20 @@ spec:
   minRunners: {{ .Values.minRunners | int }}
   {{- end }}
 
+  {{- if or (kindIs "int64" .Values.maxJobsPercentage) (kindIs "float64" .Values.maxJobsPercentage) }}
+    {{- if or (lt (.Values.maxJobsPercentage | int) 0) (gt (.Values.maxJobsPercentage | int) 100) }}
+      {{- fail "maxJobsPercentage must be between 0 and 100" }}
+    {{- end }}
+  maxJobsPercentage: {{ .Values.maxJobsPercentage | int }}
+  {{- end }}
+
+  {{- if or (kindIs "int64" .Values.maxJobsPerAcquisition) (kindIs "float64" .Values.maxJobsPerAcquisition) }}
+    {{- if lt (.Values.maxJobsPerAcquisition | int) 0 }}
+      {{- fail "maxJobsPerAcquisition has to be greater or equal to 0" }}
+    {{- end }}
+  maxJobsPerAcquisition: {{ .Values.maxJobsPerAcquisition | int }}
+  {{- end }}
+
   {{- with .Values.listenerTemplate}}
   listenerTemplate:
     {{- toYaml . | nindent 4}}

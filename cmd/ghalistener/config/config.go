@@ -32,6 +32,10 @@ type Config struct {
 	LogFormat                   string `json:"logFormat"`
 	MetricsAddr                 string `json:"metricsAddr"`
 	MetricsEndpoint             string `json:"metricsEndpoint"`
+
+	// Job acquisition control
+	MaxJobsPerAcquisition int `json:"maxJobsPerAcquisition"` // 0 means no limit
+	MaxJobsPercentage     int `json:"maxJobsPercentage"`     // Percentage of available jobs to acquire
 }
 
 func Read(path string) (Config, error) {
@@ -69,6 +73,14 @@ func (c *Config) Validate() error {
 
 	if c.MaxRunners < c.MinRunners {
 		return fmt.Errorf("MinRunners '%d' cannot be greater than MaxRunners '%d'", c.MinRunners, c.MaxRunners)
+	}
+
+	if c.MaxJobsPercentage < 0 || c.MaxJobsPercentage > 100 {
+		return fmt.Errorf("MaxJobsPercentage must be between 0 and 100")
+	}
+
+	if c.MaxJobsPerAcquisition < 0 {
+		return fmt.Errorf("MaxJobsPerAcquisition must be greater than or equal to 0")
 	}
 
 	hasToken := len(c.Token) > 0

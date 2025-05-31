@@ -4,15 +4,15 @@ githubConfigUrl: ""
 
 ## githubConfigSecret is the k8s secret information to use when authenticating via the GitHub API.
 ## You can choose to supply:
-##   A) a PAT token, 
-##   B) a GitHub App, or 
+##   A) a PAT token,
+##   B) a GitHub App, or
 ##   C) a pre-defined Kubernetes secret.
 ## The syntax for each of these variations is documented below.
 ## (Variation A) When using a PAT token, the syntax is as follows:
 githubConfigSecret:
-  # Example:  
+  # Example:
   # github_token: "ghp_sampleSampleSampleSampleSampleSample"
-  github_token: ""  
+  github_token: ""
 #
 ## (Variation B) When using a GitHub App, the syntax is as follows:
 # githubConfigSecret:
@@ -57,6 +57,13 @@ githubConfigSecret:
 ## minRunners is the min number of idle runners. The target number of runners created will be
 ## calculated as a sum of minRunners and the number of jobs assigned to the scale set.
 # minRunners: 0
+
+## Optional job acquisition controls to limit how many jobs each listener acquires
+## maxJobsPercentage limits to a percentage of available jobs (default: 100%)
+# maxJobsPercentage: 100
+
+## maxJobsPerAcquisition limits to an absolute number per acquisition (default: 0, no limit)
+# maxJobsPerAcquisition: 0
 
 # runnerGroup: "default"
 

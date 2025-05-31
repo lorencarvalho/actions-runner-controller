@@ -16,6 +16,8 @@ type Config struct {
 	EphemeralRunnerSetName      string `json:"ephemeralRunnerSetName"`
 	MaxRunners                  int    `json:"maxRunners"`
 	MinRunners                  int    `json:"minRunners"`
+	MaxJobsPercentage           int    `json:"maxJobsPercentage"`
+	MaxJobsPerAcquisition       int    `json:"maxJobsPerAcquisition"`
 	RunnerScaleSetId            int    `json:"runnerScaleSetId"`
 	RunnerScaleSetName          string `json:"runnerScaleSetName"`
 	ServerRootCA                string `json:"serverRootCA"`

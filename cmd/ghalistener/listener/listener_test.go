@@ -968,3 +968,180 @@ func TestListener_parseMessage(t *testing.T) {
 		assert.Equal(t, jobsCompleted, parsedMsg.jobsCompleted)
 	})
 }
+
+func TestCalculateJobLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                  string
+		totalJobs             int
+		maxJobsPercentage     int
+		maxJobsPerAcquisition int
+		expectedLimit         int
+		description           string
+	}{
+		{
+			name:                  "Default behavior - 100% with no absolute limit",
+			totalJobs:             100,
+			maxJobsPercentage:     100,
+			maxJobsPerAcquisition: 0,
+			expectedLimit:         100,
+			description:           "Should acquire all jobs when percentage is 100% and no absolute limit",
+		},
+		{
+			name:                  "Percentage limit applied - 17% of 600 jobs",
+			totalJobs:             600,
+			maxJobsPercentage:     17,
+			maxJobsPerAcquisition: 0,
+			expectedLimit:         102, // 600 * 17% = 102
+			description:           "Should acquire 17% of 600 jobs for fair distribution across 6 clusters",
+		},
+		{
+			name:                  "Absolute limit applied when smaller than percentage",
+			totalJobs:             1000,
+			maxJobsPercentage:     50,
+			maxJobsPerAcquisition: 200,
+			expectedLimit:         200,
+			description:           "Should use absolute limit when it's smaller than percentage limit",
+		},
+		{
+			name:                  "Percentage limit applied when smaller than absolute",
+			totalJobs:             100,
+			maxJobsPercentage:     20,
+			maxJobsPerAcquisition: 50,
+			expectedLimit:         20, // 100 * 20% = 20, which is less than 50
+			description:           "Should use percentage limit when it's smaller than absolute limit",
+		},
+		{
+			name:                  "Zero jobs available",
+			totalJobs:             0,
+			maxJobsPercentage:     50,
+			maxJobsPerAcquisition: 10,
+			expectedLimit:         0,
+			description:           "Should return 0 when no jobs are available",
+		},
+		{
+			name:                  "Edge case - 1% of large number",
+			totalJobs:             10000,
+			maxJobsPercentage:     1,
+			maxJobsPerAcquisition: 0,
+			expectedLimit:         100, // 10000 * 1% = 100
+			description:           "Should handle small percentages correctly",
+		},
+		{
+			name:                  "Edge case - very small percentage rounds down",
+			totalJobs:             10,
+			maxJobsPercentage:     5,
+			maxJobsPerAcquisition: 0,
+			expectedLimit:         0, // 10 * 5% = 0.5, rounds down to 0
+			description:           "Should round down when percentage calculation results in fractional jobs",
+		},
+		{
+			name:                  "Edge case - very small percentage rounds up to 1",
+			totalJobs:             100,
+			maxJobsPercentage:     1,
+			maxJobsPerAcquisition: 0,
+			expectedLimit:         1, // 100 * 1% = 1
+			description:           "Should correctly calculate small percentages that result in whole numbers",
+		},
+		{
+			name:                  "Both limits equal",
+			totalJobs:             200,
+			maxJobsPercentage:     25,
+			maxJobsPerAcquisition: 50,
+			expectedLimit:         50, // 200 * 25% = 50, equal to absolute limit
+			description:           "Should work correctly when both limits result in the same value",
+		},
+		{
+			name:                  "Zero percentage means no jobs",
+			totalJobs:             1000,
+			maxJobsPercentage:     0,
+			maxJobsPerAcquisition: 100,
+			expectedLimit:         0, // 0% means no jobs regardless of absolute limit
+			description:           "Should return 0 when percentage is 0, even with absolute limit set",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			result := calculateJobLimitWithParams(tt.totalJobs, tt.maxJobsPercentage, tt.maxJobsPerAcquisition)
+			assert.Equal(t, tt.expectedLimit, result, tt.description)
+		})
+	}
+}
+
+func TestCalculateJobLimitRealWorldScenarios(t *testing.T) {
+	t.Parallel()
+
+	t.Run("6-cluster deployment scenario", func(t *testing.T) {
+		t.Parallel()
+
+		// Simulate 6 clusters each configured with 17% (approximately 1/6)
+		scenarios := []struct {
+			totalJobs     int
+			expectedLimit int
+		}{
+			{600, 102},  // 600 * 17% = 102 jobs per cluster
+			{300, 51},   // 300 * 17% = 51 jobs per cluster
+			{60, 10},    // 60 * 17% = 10.2 → 10 jobs per cluster
+			{1200, 204}, // 1200 * 17% = 204 jobs per cluster
+		}
+
+		for _, scenario := range scenarios {
+			result := calculateJobLimitWithParams(scenario.totalJobs, 17, 0)
+			assert.Equal(t, scenario.expectedLimit, result,
+				"For %d total jobs, each of 6 clusters should get ~%d jobs",
+				scenario.totalJobs, scenario.expectedLimit)
+		}
+	})
+
+	t.Run("Combined percentage and absolute limits", func(t *testing.T) {
+		t.Parallel()
+
+		// Real scenario: limit to 20% but never more than 100 jobs per acquisition
+		testCases := []struct {
+			totalJobs     int
+			expectedLimit int
+			reason        string
+		}{
+			{200, 40, "20% of 200 = 40, under absolute limit"},
+			{500, 100, "20% of 500 = 100, equals absolute limit"},
+			{1000, 100, "20% of 1000 = 200, but capped at absolute limit of 100"},
+		}
+
+		for _, tc := range testCases {
+			result := calculateJobLimitWithParams(tc.totalJobs, 20, 100)
+			assert.Equal(t, tc.expectedLimit, result, tc.reason)
+		}
+	})
+}
+
+func TestCalculateJobLimitBoundaryConditions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Maximum percentage", func(t *testing.T) {
+		t.Parallel()
+		result := calculateJobLimitWithParams(100, 100, 0)
+		assert.Equal(t, 100, result, "100% should return all jobs")
+	})
+
+	t.Run("Minimum percentage", func(t *testing.T) {
+		t.Parallel()
+		result := calculateJobLimitWithParams(100, 0, 0)
+		assert.Equal(t, 0, result, "0% should return no jobs")
+	})
+
+	t.Run("Large job count", func(t *testing.T) {
+		t.Parallel()
+		result := calculateJobLimitWithParams(1000000, 1, 0)
+		assert.Equal(t, 10000, result, "Should handle large numbers correctly")
+	})
+
+	t.Run("No absolute limit (zero)", func(t *testing.T) {
+		t.Parallel()
+		result := calculateJobLimitWithParams(500, 50, 0)
+		assert.Equal(t, 250, result, "Zero absolute limit means no cap on percentage")
+	})
+}

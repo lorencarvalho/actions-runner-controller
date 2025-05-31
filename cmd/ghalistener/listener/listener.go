@@ -45,6 +45,10 @@ type Config struct {
 	MaxRunners int
 	Logger     logr.Logger
 	Metrics    metrics.Publisher
+
+	// Job acquisition control
+	MaxJobsPerAcquisition int
+	MaxJobsPercentage     int
 }
 
 func (c *Config) Validate() error {
@@ -63,6 +67,9 @@ func (c *Config) Validate() error {
 	if c.MaxRunners > 0 && c.MinRunners > c.MaxRunners {
 		return errors.New("minRunners must be less than or equal to maxRunners")
 	}
+	if c.MaxJobsPercentage < 0 || c.MaxJobsPercentage > 100 {
+		return errors.New("maxJobsPercentage must be between 0 and 100")
+	}
 	return nil
 }
 
@@ -70,18 +77,18 @@ func (c *Config) Validate() error {
 // It receives messages and processes them using the given handler.
 type Listener struct {
 	// configured fields
-	scaleSetID int               // The ID of the scale set associated with the listener.
-	client     Client            // The client used to interact with the scale set.
-	metrics    metrics.Publisher // The publisher used to publish metrics.
+	scaleSetID    int
+	client        Client
+	logger        logr.Logger
+	metrics       metrics.Publisher
+	session       *actions.RunnerScaleSetSession
+	lastMessageID int64
+	maxCapacity   int
+	hostname      string
 
-	// internal fields
-	logger   logr.Logger // The logger used for logging.
-	hostname string      // The hostname of the listener.
-
-	// updated fields
-	lastMessageID int64                          // The ID of the last processed message.
-	maxCapacity   int                            // The maximum number of runners that can be created.
-	session       *actions.RunnerScaleSetSession // The session for managing the runner scale set.
+	// Job acquisition control
+	maxJobsPerAcquisition int
+	maxJobsPercentage     int
 }
 
 func New(config Config) (*Listener, error) {
@@ -90,11 +97,13 @@ func New(config Config) (*Listener, error) {
 	}
 
 	listener := &Listener{
-		scaleSetID:  config.ScaleSetID,
-		client:      config.Client,
-		logger:      config.Logger,
-		metrics:     metrics.Discard,
-		maxCapacity: config.MaxRunners,
+		scaleSetID:            config.ScaleSetID,
+		client:                config.Client,
+		logger:                config.Logger,
+		metrics:               metrics.Discard,
+		maxCapacity:           config.MaxRunners,
+		maxJobsPerAcquisition: config.MaxJobsPerAcquisition,
+		maxJobsPercentage:     config.MaxJobsPercentage,
 	}
 
 	if config.Metrics != nil {
@@ -398,12 +407,32 @@ func (l *Listener) parseMessage(ctx context.Context, msg *actions.RunnerScaleSet
 }
 
 func (l *Listener) acquireAvailableJobs(ctx context.Context, jobsAvailable []*actions.JobAvailable) ([]int64, error) {
-	ids := make([]int64, 0, len(jobsAvailable))
-	for _, job := range jobsAvailable {
+	if len(jobsAvailable) == 0 {
+		return nil, nil
+	}
+
+	totalJobs := len(jobsAvailable)
+	jobsToAcquire := l.calculateJobLimit(totalJobs)
+
+	// Select the jobs to acquire (up to the calculated limit)
+	var selectedJobs []*actions.JobAvailable
+	if jobsToAcquire >= totalJobs {
+		selectedJobs = jobsAvailable
+	} else {
+		selectedJobs = jobsAvailable[:jobsToAcquire]
+	}
+
+	if len(selectedJobs) == 0 {
+		l.logger.Info("No jobs selected for acquisition based on limits")
+		return nil, nil
+	}
+
+	ids := make([]int64, 0, len(selectedJobs))
+	for _, job := range selectedJobs {
 		ids = append(ids, job.RunnerRequestId)
 	}
 
-	l.logger.Info("Acquiring jobs", "count", len(ids), "requestIds", fmt.Sprint(ids))
+	l.logger.Info("Acquiring jobs", "count", len(ids), "total_available", totalJobs, "requestIds", fmt.Sprint(ids))
 
 	idsAcquired, err := l.client.AcquireJobs(ctx, l.scaleSetID, l.session.MessageQueueAccessToken, ids)
 	if err == nil { // if NO errors
@@ -425,6 +454,37 @@ func (l *Listener) acquireAvailableJobs(ctx context.Context, jobsAvailable []*ac
 	}
 
 	return idsAcquired, nil
+}
+
+// calculateJobLimit determines how many jobs to acquire based on percentage and absolute limits
+func (l *Listener) calculateJobLimit(totalJobs int) int {
+	return calculateJobLimitWithParams(totalJobs, l.maxJobsPercentage, l.maxJobsPerAcquisition)
+}
+
+// calculateJobLimitWithParams is a standalone function that calculates job limits
+// This allows for easier testing while keeping the same logic
+func calculateJobLimitWithParams(totalJobs, maxJobsPercentage, maxJobsPerAcquisition int) int {
+	if totalJobs == 0 {
+		return 0
+	}
+
+	var limit int
+
+	// Calculate percentage limit
+	if maxJobsPercentage == 0 {
+		// 0% means no jobs should be acquired
+		return 0
+	} else {
+		percentageLimit := (totalJobs * maxJobsPercentage) / 100
+		limit = percentageLimit
+	}
+
+	// Apply absolute limit if set and it's more restrictive
+	if maxJobsPerAcquisition > 0 && limit > maxJobsPerAcquisition {
+		limit = maxJobsPerAcquisition
+	}
+
+	return limit
 }
 
 func (l *Listener) refreshSession(ctx context.Context) error {

@@ -2092,6 +2092,8 @@ func TestRunnerContainerVolumeNotEmptyMap(t *testing.T) {
 func TestAutoscalingRunnerSetAnnotationValuesHash(t *testing.T) {
 	t.Parallel()
 
+	const valuesHash = "actions.github.com/values-hash"
+
 	// Path to the helm chart we will test
 	helmChartPath, err := filepath.Abs("../../gha-runner-scale-set")
 	require.NoError(t, err)
@@ -2104,58 +2106,40 @@ func TestAutoscalingRunnerSetAnnotationValuesHash(t *testing.T) {
 		SetValues: map[string]string{
 			"githubConfigUrl":                    "https://github.com/actions",
 			"githubConfigSecret.github_token":    "gh_token12345",
-			"runnerScaleSetName":                 "test-scale-set",
-			"minRunners":                         "1",
-			"maxRunners":                         "5",
-			"containerMode.type":                 "dind",
 			"controllerServiceAccount.name":      "arc",
 			"controllerServiceAccount.namespace": "arc-system",
 		},
 		KubectlOptions: k8s.NewKubectlOptions("", "", namespaceName),
 	}
 
-	// Get list of rendered templates
-	renderedTemplates := helm.RenderTemplate(t, options, helmChartPath, releaseName, nil)
+	output := helm.RenderTemplate(t, options, helmChartPath, releaseName, []string{"templates/autoscalingrunnerset.yaml"})
 
-	var ars v1alpha1.AutoscalingRunnerSet
+	var autoscalingRunnerSet v1alpha1.AutoscalingRunnerSet
+	helm.UnmarshalK8SYaml(t, output, &autoscalingRunnerSet)
 
-	// Parse the autoscaling runner set specifically
-	templates := strings.Split(renderedTemplates, "---")
-	for _, tmpl := range templates {
-		trimmed := strings.TrimSpace(tmpl)
-		if trimmed == "" {
-			continue
-		}
-		if strings.Contains(trimmed, "kind: AutoscalingRunnerSet") {
-			helm.UnmarshalK8SYaml(t, trimmed, &ars)
-			break
-		}
+	firstHash := autoscalingRunnerSet.Annotations["actions.github.com/values-hash"]
+	assert.NotEmpty(t, firstHash)
+	assert.LessOrEqual(t, len(firstHash), 63)
+
+	helmChartPath, err = filepath.Abs("../../gha-runner-scale-set")
+	require.NoError(t, err)
+
+	options = &helm.Options{
+		Logger: logger.Discard,
+		SetValues: map[string]string{
+			"githubConfigUrl":                    "https://github.com/actions",
+			"githubConfigSecret.github_token":    "gh_token1234567890",
+			"controllerServiceAccount.name":      "arc",
+			"controllerServiceAccount.namespace": "arc-system",
+		},
+		KubectlOptions: k8s.NewKubectlOptions("", "", namespaceName),
 	}
 
-	// Check that the annotation exists
-	require.NotNil(t, ars.Annotations, "AutoscalingRunnerSet should have annotations")
+	output = helm.RenderTemplate(t, options, helmChartPath, releaseName, []string{"templates/autoscalingrunnerset.yaml"})
 
-	valuesHash, exists := ars.Annotations["actions.github.com/values-hash"]
-	require.True(t, exists, "AutoscalingRunnerSet should have values-hash annotation")
-	require.NotEmpty(t, valuesHash, "Values hash should not be empty")
-
-	// Hash should be consistent - if we render again with same values, should get same hash
-	renderedTemplates2 := helm.RenderTemplate(t, options, helmChartPath, releaseName, nil)
-	var ars2 v1alpha1.AutoscalingRunnerSet
-
-	templates2 := strings.Split(renderedTemplates2, "---")
-	for _, tmpl := range templates2 {
-		trimmed := strings.TrimSpace(tmpl)
-		if trimmed == "" {
-			continue
-		}
-		if strings.Contains(trimmed, "kind: AutoscalingRunnerSet") {
-			helm.UnmarshalK8SYaml(t, trimmed, &ars2)
-			break
-		}
-	}
-
-	valuesHash2, exists2 := ars2.Annotations["actions.github.com/values-hash"]
-	require.True(t, exists2, "Second render should also have values-hash annotation")
-	assert.Equal(t, valuesHash, valuesHash2, "Hash should be consistent across renders with same values")
+	helm.UnmarshalK8SYaml(t, output, &autoscalingRunnerSet)
+	secondHash := autoscalingRunnerSet.Annotations[valuesHash]
+	assert.NotEmpty(t, secondHash)
+	assert.NotEqual(t, firstHash, secondHash)
+	assert.LessOrEqual(t, len(secondHash), 63)
 }

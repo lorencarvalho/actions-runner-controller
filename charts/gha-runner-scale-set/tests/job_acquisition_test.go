@@ -156,7 +156,7 @@ func TestTemplateRenderedAutoScalingRunnerSet_MaxJobsPerAcquisitionValidationErr
 		KubectlOptions: k8s.NewKubectlOptions("", "", namespaceName),
 	}
 
-	_, err := helm.RenderTemplateE(t, options, helmChartPath, releaseName, []string{"templates/autoscalingrunnerset.yaml"})
+	_, err = helm.RenderTemplateE(t, options, helmChartPath, releaseName, []string{"templates/autoscalingrunnerset.yaml"})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "maxJobsPerAcquisition has to be greater or equal to 0")
 }

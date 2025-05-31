@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"os"
 	"time"
@@ -47,8 +48,9 @@ type Config struct {
 	Metrics    metrics.Publisher
 
 	// Job acquisition control
-	MaxJobsPerAcquisition int
-	MaxJobsPercentage     int
+	// Use pointers to distinguish between "not set" (nil) and "explicitly set to 0"
+	MaxJobsPerAcquisition *int
+	MaxJobsPercentage     *int
 }
 
 func (c *Config) Validate() error {
@@ -67,8 +69,11 @@ func (c *Config) Validate() error {
 	if c.MaxRunners > 0 && c.MinRunners > c.MaxRunners {
 		return errors.New("minRunners must be less than or equal to maxRunners")
 	}
-	if c.MaxJobsPercentage < 0 || c.MaxJobsPercentage > 100 {
+	if c.MaxJobsPercentage != nil && (*c.MaxJobsPercentage < 0 || *c.MaxJobsPercentage > 100) {
 		return errors.New("maxJobsPercentage must be between 0 and 100")
+	}
+	if c.MaxJobsPerAcquisition != nil && *c.MaxJobsPerAcquisition < 0 {
+		return errors.New("maxJobsPerAcquisition must be greater than or equal to 0")
 	}
 	return nil
 }
@@ -77,23 +82,36 @@ func (c *Config) Validate() error {
 // It receives messages and processes them using the given handler.
 type Listener struct {
 	// configured fields
-	scaleSetID    int
-	client        Client
-	logger        logr.Logger
-	metrics       metrics.Publisher
-	session       *actions.RunnerScaleSetSession
-	lastMessageID int64
-	maxCapacity   int
-	hostname      string
+	scaleSetID int               // The ID of the scale set associated with the listener.
+	client     Client            // The client used to interact with the scale set.
+	metrics    metrics.Publisher // The publisher used to publish metrics.
 
-	// Job acquisition control
-	maxJobsPerAcquisition int
-	maxJobsPercentage     int
+	// internal fields
+	logger   logr.Logger // The logger used for logging.
+	hostname string      // The hostname of the listener.
+
+	// updated fields
+	lastMessageID         int64                          // The ID of the last processed message.
+	maxCapacity           int                            // The maximum number of runners that can be created.
+	maxJobsPerAcquisition int                            // The maximum number of jobs to acquire per acquisition.
+	maxJobsPercentage     int                            // The maximum percentage of jobs to acquire.
+	session               *actions.RunnerScaleSetSession // The session for managing the runner scale set.
 }
 
 func New(config Config) (*Listener, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
+	// Set defaults for job acquisition control
+	maxJobsPercentage := 100 // Default to 100% for backward compatibility
+	if config.MaxJobsPercentage != nil {
+		maxJobsPercentage = *config.MaxJobsPercentage
+	}
+
+	maxJobsPerAcquisition := 0 // Default to no limit
+	if config.MaxJobsPerAcquisition != nil {
+		maxJobsPerAcquisition = *config.MaxJobsPerAcquisition
 	}
 
 	listener := &Listener{
@@ -102,8 +120,8 @@ func New(config Config) (*Listener, error) {
 		logger:                config.Logger,
 		metrics:               metrics.Discard,
 		maxCapacity:           config.MaxRunners,
-		maxJobsPerAcquisition: config.MaxJobsPerAcquisition,
-		maxJobsPercentage:     config.MaxJobsPercentage,
+		maxJobsPerAcquisition: maxJobsPerAcquisition,
+		maxJobsPercentage:     maxJobsPercentage,
 	}
 
 	if config.Metrics != nil {
@@ -419,7 +437,9 @@ func (l *Listener) acquireAvailableJobs(ctx context.Context, jobsAvailable []*ac
 	if jobsToAcquire >= totalJobs {
 		selectedJobs = jobsAvailable
 	} else {
-		selectedJobs = jobsAvailable[:jobsToAcquire]
+		// Randomly select jobs instead of taking the first N jobs
+		// This prevents multiple listeners from competing for the same subset
+		selectedJobs = l.randomlySelectJobs(jobsAvailable, jobsToAcquire)
 	}
 
 	if len(selectedJobs) == 0 {
@@ -454,6 +474,28 @@ func (l *Listener) acquireAvailableJobs(ctx context.Context, jobsAvailable []*ac
 	}
 
 	return idsAcquired, nil
+}
+
+// randomlySelectJobs randomly selects count jobs from the available jobs slice
+func (l *Listener) randomlySelectJobs(available []*actions.JobAvailable, count int) []*actions.JobAvailable {
+	if count >= len(available) {
+		return available
+	}
+
+	// Create a copy of the slice to avoid modifying the original
+	jobs := make([]*actions.JobAvailable, len(available))
+	copy(jobs, available)
+
+	// Use Fisher-Yates shuffle to randomly select first 'count' elements
+	for i := 0; i < count; i++ {
+		// Pick random index from remaining unshuffled elements
+		j := i + rand.Intn(len(jobs)-i)
+		// Swap current element with randomly selected element
+		jobs[i], jobs[j] = jobs[j], jobs[i]
+	}
+
+	// Return the first 'count' shuffled elements
+	return jobs[:count]
 }
 
 // calculateJobLimit determines how many jobs to acquire based on percentage and absolute limits

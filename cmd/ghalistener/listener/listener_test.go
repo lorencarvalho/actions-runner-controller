@@ -17,6 +17,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Helper function for tests to create int pointers
+func intPtr(i int) *int {
+	return &i
+}
+
 func TestNew(t *testing.T) {
 	t.Parallel()
 	t.Run("InvalidConfig", func(t *testing.T) {
@@ -656,9 +661,21 @@ func TestListener_acquireAvailableJobs(t *testing.T) {
 
 		client := listenermocks.NewClient(t)
 
-		jobIDs := []int64{1, 2, 3}
-
-		client.On("AcquireJobs", ctx, mock.Anything, mock.Anything, mock.Anything).Return(jobIDs, nil).Once()
+		// Since we're taking all jobs (100% by default), we should get all 3 job IDs
+		// but the order might be random, so we check the response matches what we return
+		client.On("AcquireJobs", ctx, mock.Anything, mock.Anything, mock.MatchedBy(func(ids []int64) bool {
+			// Verify we get exactly 3 job IDs and they're all valid
+			if len(ids) != 3 {
+				return false
+			}
+			validIds := map[int64]bool{1: true, 2: true, 3: true}
+			for _, id := range ids {
+				if !validIds[id] {
+					return false
+				}
+			}
+			return true
+		})).Return([]int64{1, 2, 3}, nil).Once()
 
 		config.Client = client
 
@@ -719,8 +736,6 @@ func TestListener_acquireAvailableJobs(t *testing.T) {
 		}
 		client.On("RefreshMessageSession", ctx, mock.Anything, mock.Anything).Return(session, nil).Once()
 
-		// Second call to AcquireJobs will succeed
-		want := []int64{1, 2, 3}
 		availableJobs := []*actions.JobAvailable{
 			{
 				JobMessageBase: actions.JobMessageBase{
@@ -740,22 +755,34 @@ func TestListener_acquireAvailableJobs(t *testing.T) {
 		}
 
 		// First call to AcquireJobs will fail with a token expired error
-		client.On("AcquireJobs", ctx, mock.Anything, mock.Anything, mock.Anything).
-			Run(func(args mock.Arguments) {
-				ids := args.Get(3).([]int64)
-				assert.Equal(t, want, ids)
-			}).
-			Return(nil, &actions.MessageQueueTokenExpiredError{}).
-			Once()
+		client.On("AcquireJobs", ctx, mock.Anything, mock.Anything, mock.MatchedBy(func(ids []int64) bool {
+			// Verify we get exactly 3 job IDs and they're all valid
+			if len(ids) != 3 {
+				return false
+			}
+			validIds := map[int64]bool{1: true, 2: true, 3: true}
+			for _, id := range ids {
+				if !validIds[id] {
+					return false
+				}
+			}
+			return true
+		})).Return(nil, &actions.MessageQueueTokenExpiredError{}).Once()
 
-		// Second call should succeed
-		client.On("AcquireJobs", ctx, mock.Anything, mock.Anything, mock.Anything).
-			Run(func(args mock.Arguments) {
-				ids := args.Get(3).([]int64)
-				assert.Equal(t, want, ids)
-			}).
-			Return(want, nil).
-			Once()
+		// Second call should succeed - return the same IDs that were passed in
+		client.On("AcquireJobs", ctx, mock.Anything, mock.Anything, mock.MatchedBy(func(ids []int64) bool {
+			// Same validation as above
+			if len(ids) != 3 {
+				return false
+			}
+			validIds := map[int64]bool{1: true, 2: true, 3: true}
+			for _, id := range ids {
+				if !validIds[id] {
+					return false
+				}
+			}
+			return true
+		})).Return([]int64{1, 2, 3}, nil).Once()
 
 		config.Client = client
 
@@ -769,7 +796,7 @@ func TestListener_acquireAvailableJobs(t *testing.T) {
 
 		got, err := l.acquireAvailableJobs(ctx, availableJobs)
 		assert.Nil(t, err)
-		assert.Equal(t, want, got)
+		assert.Equal(t, []int64{1, 2, 3}, got)
 	})
 
 	t.Run("RefreshAndFails", func(t *testing.T) {
@@ -827,6 +854,59 @@ func TestListener_acquireAvailableJobs(t *testing.T) {
 		got, err := l.acquireAvailableJobs(ctx, availableJobs)
 		assert.NotNil(t, err)
 		assert.Nil(t, got)
+	})
+
+	t.Run("StandbyListener_AcquiresNoJobs", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+		config := Config{
+			ScaleSetID:        1,
+			Metrics:           metrics.Discard,
+			MaxJobsPercentage: intPtr(0), // Standby mode - acquire no jobs
+		}
+
+		client := listenermocks.NewClient(t)
+		// No AcquireJobs calls should be made
+
+		config.Client = client
+
+		l, err := New(config)
+		require.Nil(t, err)
+
+		uuid := uuid.New()
+		l.session = &actions.RunnerScaleSetSession{
+			SessionId:               &uuid,
+			OwnerName:               "example",
+			RunnerScaleSet:          &actions.RunnerScaleSet{},
+			MessageQueueUrl:         "https://example.com",
+			MessageQueueAccessToken: "1234567890",
+			Statistics:              &actions.RunnerScaleSetStatistic{},
+		}
+
+		availableJobs := []*actions.JobAvailable{
+			{
+				JobMessageBase: actions.JobMessageBase{
+					RunnerRequestId: 1,
+				},
+			},
+			{
+				JobMessageBase: actions.JobMessageBase{
+					RunnerRequestId: 2,
+				},
+			},
+			{
+				JobMessageBase: actions.JobMessageBase{
+					RunnerRequestId: 3,
+				},
+			},
+		}
+
+		acquiredJobIDs, err := l.acquireAvailableJobs(ctx, availableJobs)
+		assert.NoError(t, err, "Should not error when configured for 0%")
+		assert.Nil(t, acquiredJobIDs, "Should acquire no jobs in standby mode")
+
+		// Verify no calls were made to the client (implicitly verified by mock expectations)
 	})
 }
 
@@ -1143,5 +1223,208 @@ func TestCalculateJobLimitBoundaryConditions(t *testing.T) {
 		t.Parallel()
 		result := calculateJobLimitWithParams(500, 50, 0)
 		assert.Equal(t, 250, result, "Zero absolute limit means no cap on percentage")
+	})
+}
+
+func TestRandomlySelectJobs(t *testing.T) {
+	t.Parallel()
+
+	// Create a listener for testing
+	config := Config{
+		Client:     listenermocks.NewClient(t),
+		ScaleSetID: 1,
+		Metrics:    metrics.Discard,
+	}
+	l, err := New(config)
+	require.NoError(t, err)
+
+	t.Run("Select fewer jobs than available", func(t *testing.T) {
+		t.Parallel()
+
+		// Create test jobs
+		availableJobs := []*actions.JobAvailable{
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 1}},
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 2}},
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 3}},
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 4}},
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 5}},
+		}
+
+		selectedJobs := l.randomlySelectJobs(availableJobs, 3)
+
+		assert.Len(t, selectedJobs, 3, "Should select exactly 3 jobs")
+		assert.Len(t, availableJobs, 5, "Original slice should be unchanged")
+
+		// Verify all selected jobs are from the original list
+		originalIds := make(map[int64]bool)
+		for _, job := range availableJobs {
+			originalIds[job.RunnerRequestId] = true
+		}
+
+		for _, selectedJob := range selectedJobs {
+			assert.True(t, originalIds[selectedJob.RunnerRequestId],
+				"Selected job %d should be from original list", selectedJob.RunnerRequestId)
+		}
+
+		// Verify no duplicates in selection
+		selectedIds := make(map[int64]bool)
+		for _, job := range selectedJobs {
+			assert.False(t, selectedIds[job.RunnerRequestId],
+				"Job %d should not be selected twice", job.RunnerRequestId)
+			selectedIds[job.RunnerRequestId] = true
+		}
+	})
+
+	t.Run("Select all jobs when count equals available", func(t *testing.T) {
+		t.Parallel()
+
+		availableJobs := []*actions.JobAvailable{
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 1}},
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 2}},
+		}
+
+		selectedJobs := l.randomlySelectJobs(availableJobs, 2)
+
+		assert.Len(t, selectedJobs, 2, "Should select all jobs")
+	})
+
+	t.Run("Select all jobs when count exceeds available", func(t *testing.T) {
+		t.Parallel()
+
+		availableJobs := []*actions.JobAvailable{
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 1}},
+		}
+
+		selectedJobs := l.randomlySelectJobs(availableJobs, 5)
+
+		assert.Len(t, selectedJobs, 1, "Should return all available jobs")
+		assert.Equal(t, availableJobs[0].RunnerRequestId, selectedJobs[0].RunnerRequestId)
+	})
+
+	t.Run("Select zero jobs", func(t *testing.T) {
+		t.Parallel()
+
+		availableJobs := []*actions.JobAvailable{
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 1}},
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 2}},
+		}
+
+		selectedJobs := l.randomlySelectJobs(availableJobs, 0)
+
+		assert.Len(t, selectedJobs, 0, "Should select no jobs")
+	})
+
+	t.Run("Empty job list", func(t *testing.T) {
+		t.Parallel()
+
+		var availableJobs []*actions.JobAvailable
+
+		selectedJobs := l.randomlySelectJobs(availableJobs, 3)
+
+		assert.Len(t, selectedJobs, 0, "Should return empty slice")
+	})
+
+	t.Run("Random distribution test", func(t *testing.T) {
+		t.Parallel()
+
+		// This test verifies that the selection is actually random
+		// by running multiple selections and checking distribution
+		availableJobs := []*actions.JobAvailable{
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 1}},
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 2}},
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 3}},
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 4}},
+			{JobMessageBase: actions.JobMessageBase{RunnerRequestId: 5}},
+		}
+
+		// Count how often each job is selected
+		selectionCount := make(map[int64]int)
+		iterations := 1000
+
+		for i := 0; i < iterations; i++ {
+			selectedJobs := l.randomlySelectJobs(availableJobs, 2)
+			for _, job := range selectedJobs {
+				selectionCount[job.RunnerRequestId]++
+			}
+		}
+
+		// Each job should be selected roughly 2/5 = 40% of the time (2 out of 5 jobs selected)
+		// Allow some variance but verify it's reasonably distributed
+		expectedFrequency := float64(iterations) * 2.0 / 5.0 // 400
+		tolerance := expectedFrequency * 0.3                 // 30% tolerance
+
+		for jobId, count := range selectionCount {
+			frequency := float64(count)
+			assert.True(t, frequency > expectedFrequency-tolerance && frequency < expectedFrequency+tolerance,
+				"Job %d selected %d times, expected ~%.0f (±%.0f)",
+				jobId, count, expectedFrequency, tolerance)
+		}
+
+		// Verify all jobs were selected at least once (very high probability)
+		assert.Len(t, selectionCount, 5, "All jobs should be selected at least once over %d iterations", iterations)
+	})
+}
+
+func TestConfigDefaults(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Default MaxJobsPercentage is 100", func(t *testing.T) {
+		t.Parallel()
+
+		config := Config{
+			Client:     listenermocks.NewClient(t),
+			ScaleSetID: 1,
+			Metrics:    metrics.Discard,
+			// MaxJobsPercentage not set (nil)
+		}
+
+		l, err := New(config)
+		require.NoError(t, err)
+		assert.Equal(t, 100, l.maxJobsPercentage, "Should default to 100% when not set")
+	})
+
+	t.Run("Explicit 0 MaxJobsPercentage is respected", func(t *testing.T) {
+		t.Parallel()
+
+		config := Config{
+			Client:            listenermocks.NewClient(t),
+			ScaleSetID:        1,
+			Metrics:           metrics.Discard,
+			MaxJobsPercentage: intPtr(0), // Explicitly set to 0
+		}
+
+		l, err := New(config)
+		require.NoError(t, err)
+		assert.Equal(t, 0, l.maxJobsPercentage, "Should respect explicit 0 (standby listener)")
+	})
+
+	t.Run("Explicit 50 MaxJobsPercentage is respected", func(t *testing.T) {
+		t.Parallel()
+
+		config := Config{
+			Client:            listenermocks.NewClient(t),
+			ScaleSetID:        1,
+			Metrics:           metrics.Discard,
+			MaxJobsPercentage: intPtr(50), // Explicitly set to 50
+		}
+
+		l, err := New(config)
+		require.NoError(t, err)
+		assert.Equal(t, 50, l.maxJobsPercentage, "Should respect explicit value")
+	})
+
+	t.Run("Default MaxJobsPerAcquisition is 0", func(t *testing.T) {
+		t.Parallel()
+
+		config := Config{
+			Client:     listenermocks.NewClient(t),
+			ScaleSetID: 1,
+			Metrics:    metrics.Discard,
+			// MaxJobsPerAcquisition not set (nil)
+		}
+
+		l, err := New(config)
+		require.NoError(t, err)
+		assert.Equal(t, 0, l.maxJobsPerAcquisition, "Should default to 0 (no limit) when not set")
 	})
 }

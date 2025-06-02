@@ -89,18 +89,24 @@ spec:
   minRunners: {{ .Values.minRunners | int }}
   {{- end }}
 
-  {{- if or (kindIs "int64" .Values.maxJobsPercentage) (kindIs "float64" .Values.maxJobsPercentage) }}
-    {{- if or (lt (.Values.maxJobsPercentage | int) 0) (gt (.Values.maxJobsPercentage | int) 100) }}
+  {{- if hasKey .Values "maxJobsPercentage" }}
+    {{- $maxJobsPercentage := .Values.maxJobsPercentage | int }}
+    {{- if or (lt $maxJobsPercentage 0) (gt $maxJobsPercentage 100) }}
       {{- fail "maxJobsPercentage must be between 0 and 100" }}
     {{- end }}
-  maxJobsPercentage: {{ .Values.maxJobsPercentage | int }}
+  maxJobsPercentage: {{ $maxJobsPercentage }}
+  {{- else }}
+  maxJobsPercentage: 100
   {{- end }}
 
-  {{- if or (kindIs "int64" .Values.maxJobsPerAcquisition) (kindIs "float64" .Values.maxJobsPerAcquisition) }}
-    {{- if lt (.Values.maxJobsPerAcquisition | int) -1 }}
+  {{- if hasKey .Values "maxJobsPerAcquisition" }}
+    {{- $maxJobsPerAcquisition := .Values.maxJobsPerAcquisition | int }}
+    {{- if lt $maxJobsPerAcquisition -1 }}
       {{- fail "maxJobsPerAcquisition has to be greater or equal to -1 (-1 means no limit)" }}
     {{- end }}
-  maxJobsPerAcquisition: {{ .Values.maxJobsPerAcquisition | int }}
+  maxJobsPerAcquisition: {{ $maxJobsPerAcquisition }}
+  {{- else }}
+  maxJobsPerAcquisition: -1
   {{- end }}
 
   {{- with .Values.listenerTemplate}}

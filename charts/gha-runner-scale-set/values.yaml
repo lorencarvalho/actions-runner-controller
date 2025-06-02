@@ -62,8 +62,8 @@ githubConfigSecret:
 ## maxJobsPercentage limits to a percentage of available jobs (default: 100%)
 # maxJobsPercentage: 100
 
-## maxJobsPerAcquisition limits to an absolute number per acquisition (default: 0, no limit)
-# maxJobsPerAcquisition: 0
+## maxJobsPerAcquisition limits to an absolute number per acquisition (default: -1, no limit)
+# maxJobsPerAcquisition: -1
 
 # runnerGroup: "default"
 

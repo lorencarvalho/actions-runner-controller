@@ -48,8 +48,8 @@ type Config struct {
 	Metrics    metrics.Publisher
 
 	// Job acquisition control
-	// MaxJobsPercentage: 0-100, defaults to 100 (acquire all available jobs)
-	// MaxJobsPerAcquisition: -1 means no limit, 0 means acquire no jobs, >0 is the absolute limit
+	// MaxJobsPercentage: 0-100, defaults to 100 via CRD
+	// MaxJobsPerAcquisition: -1 means no limit, defaults to -1 via CRD
 	MaxJobsPerAcquisition int
 	MaxJobsPercentage     int
 }

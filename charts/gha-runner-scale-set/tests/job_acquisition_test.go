@@ -74,10 +74,10 @@ func TestTemplateRenderedAutoScalingRunnerSet_JobAcquisitionDefaults(t *testing.
 	var ars v1alpha1.AutoscalingRunnerSet
 	helm.UnmarshalK8SYaml(t, output, &ars)
 
-	// With the new non-pointer design, the CRD defaults should be used
-	// MaxJobsPercentage should default to 100, MaxJobsPerAcquisition should default to -1
-	assert.Equal(t, 100, ars.Spec.MaxJobsPercentage, "MaxJobsPercentage should default to 100")
-	assert.Equal(t, -1, ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should default to -1")
+	// With template defaults, these fields are now always rendered with their default values
+	// (100 and -1) even when not specified in values.yaml
+	assert.Equal(t, 100, ars.Spec.MaxJobsPercentage, "MaxJobsPercentage should be 100 (template default)")
+	assert.Equal(t, -1, ars.Spec.MaxJobsPerAcquisition, "MaxJobsPerAcquisition should be -1 (template default)")
 }
 
 func TestTemplateRenderedAutoScalingRunnerSet_MaxJobsPercentageValidationError(t *testing.T) {
@@ -183,19 +183,19 @@ func TestTemplateRenderedAutoScalingRunnerSet_JobAcquisitionEdgeCases(t *testing
 			name:                "Zero percentage (valid)",
 			maxJobsPercentage:   "0",
 			expectedPercentage:  0,
-			expectedAcquisition: -1, // Should use default when not set
+			expectedAcquisition: -1, // Default value when not set
 		},
 		{
 			name:                  "Zero acquisition (valid)",
 			maxJobsPerAcquisition: "0",
-			expectedPercentage:    100, // Should use default when not set
+			expectedPercentage:    100, // Default value when not set
 			expectedAcquisition:   0,
 		},
 		{
 			name:                "Maximum percentage",
 			maxJobsPercentage:   "100",
 			expectedPercentage:  100,
-			expectedAcquisition: -1, // Should use default when not set
+			expectedAcquisition: -1, // Default value when not set
 		},
 		{
 			name:                  "Both set to valid values",
@@ -207,7 +207,7 @@ func TestTemplateRenderedAutoScalingRunnerSet_JobAcquisitionEdgeCases(t *testing
 		{
 			name:                  "No limit acquisition (-1)",
 			maxJobsPerAcquisition: "-1",
-			expectedPercentage:    100, // Should use default when not set
+			expectedPercentage:    100, // Default value when not set
 			expectedAcquisition:   -1,
 		},
 	}

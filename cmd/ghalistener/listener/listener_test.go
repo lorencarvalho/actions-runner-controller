@@ -655,8 +655,10 @@ func TestListener_acquireAvailableJobs(t *testing.T) {
 
 		ctx := context.Background()
 		config := Config{
-			ScaleSetID: 1,
-			Metrics:    metrics.Discard,
+			ScaleSetID:            1,
+			Metrics:               metrics.Discard,
+			MaxJobsPercentage:     100, // Acquire all jobs
+			MaxJobsPerAcquisition: -1,  // No limit
 		}
 
 		client := listenermocks.NewClient(t)
@@ -1064,7 +1066,7 @@ func TestCalculateJobLimit(t *testing.T) {
 			name:                  "Default behavior - 100% with no absolute limit",
 			totalJobs:             100,
 			maxJobsPercentage:     100,
-			maxJobsPerAcquisition: 0,
+			maxJobsPerAcquisition: -1,
 			expectedLimit:         100,
 			description:           "Should acquire all jobs when percentage is 100% and no absolute limit",
 		},
@@ -1072,7 +1074,7 @@ func TestCalculateJobLimit(t *testing.T) {
 			name:                  "Percentage limit applied - 17% of 600 jobs",
 			totalJobs:             600,
 			maxJobsPercentage:     17,
-			maxJobsPerAcquisition: 0,
+			maxJobsPerAcquisition: -1,
 			expectedLimit:         102, // 600 * 17% = 102
 			description:           "Should acquire 17% of 600 jobs for fair distribution across 6 clusters",
 		},
@@ -1104,7 +1106,7 @@ func TestCalculateJobLimit(t *testing.T) {
 			name:                  "Edge case - 1% of large number",
 			totalJobs:             10000,
 			maxJobsPercentage:     1,
-			maxJobsPerAcquisition: 0,
+			maxJobsPerAcquisition: -1,
 			expectedLimit:         100, // 10000 * 1% = 100
 			description:           "Should handle small percentages correctly",
 		},
@@ -1112,7 +1114,7 @@ func TestCalculateJobLimit(t *testing.T) {
 			name:                  "Edge case - very small percentage rounds down",
 			totalJobs:             10,
 			maxJobsPercentage:     5,
-			maxJobsPerAcquisition: 0,
+			maxJobsPerAcquisition: -1,
 			expectedLimit:         0, // 10 * 5% = 0.5, rounds down to 0
 			description:           "Should round down when percentage calculation results in fractional jobs",
 		},
@@ -1120,7 +1122,7 @@ func TestCalculateJobLimit(t *testing.T) {
 			name:                  "Edge case - very small percentage rounds up to 1",
 			totalJobs:             100,
 			maxJobsPercentage:     1,
-			maxJobsPerAcquisition: 0,
+			maxJobsPerAcquisition: -1,
 			expectedLimit:         1, // 100 * 1% = 1
 			description:           "Should correctly calculate small percentages that result in whole numbers",
 		},
@@ -1170,7 +1172,7 @@ func TestCalculateJobLimitRealWorldScenarios(t *testing.T) {
 		}
 
 		for _, scenario := range scenarios {
-			result := calculateJobLimitWithParams(scenario.totalJobs, 17, 0)
+			result := calculateJobLimitWithParams(scenario.totalJobs, 17, -1)
 			assert.Equal(t, scenario.expectedLimit, result,
 				"For %d total jobs, each of 6 clusters should get ~%d jobs",
 				scenario.totalJobs, scenario.expectedLimit)
@@ -1203,26 +1205,26 @@ func TestCalculateJobLimitBoundaryConditions(t *testing.T) {
 
 	t.Run("Maximum percentage", func(t *testing.T) {
 		t.Parallel()
-		result := calculateJobLimitWithParams(100, 100, 0)
+		result := calculateJobLimitWithParams(100, 100, -1)
 		assert.Equal(t, 100, result, "100% should return all jobs")
 	})
 
 	t.Run("Minimum percentage", func(t *testing.T) {
 		t.Parallel()
-		result := calculateJobLimitWithParams(100, 0, 0)
+		result := calculateJobLimitWithParams(100, 0, -1)
 		assert.Equal(t, 0, result, "0% should return no jobs")
 	})
 
 	t.Run("Large job count", func(t *testing.T) {
 		t.Parallel()
-		result := calculateJobLimitWithParams(1000000, 1, 0)
+		result := calculateJobLimitWithParams(1000000, 1, -1)
 		assert.Equal(t, 10000, result, "Should handle large numbers correctly")
 	})
 
-	t.Run("No absolute limit (zero)", func(t *testing.T) {
+	t.Run("No absolute limit (-1)", func(t *testing.T) {
 		t.Parallel()
-		result := calculateJobLimitWithParams(500, 50, 0)
-		assert.Equal(t, 250, result, "Zero absolute limit means no cap on percentage")
+		result := calculateJobLimitWithParams(500, 50, -1)
+		assert.Equal(t, 250, result, "-1 absolute limit means no cap on percentage")
 	})
 }
 

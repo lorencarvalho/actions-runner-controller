@@ -96,17 +96,25 @@ func (w *Worker) applyDefaults() error {
 // about the ephemeral runner that should not be deleted when scaling down.
 // It returns an error if there is any issue with updating the job information.
 func (w *Worker) HandleJobStarted(ctx context.Context, jobInfo *actions.JobStarted) error {
-	w.logger.Info("Updating job info for the runner",
+	w.logger.Info("🏃 WORKER: HANDLING JOB STARTED",
 		"runnerName", jobInfo.RunnerName,
+		"runnerRequestId", jobInfo.RunnerRequestId,
+		"runnerId", jobInfo.RunnerId,
 		"ownerName", jobInfo.OwnerName,
-		"repoName", jobInfo.RepositoryName,
-		"workflowRef", jobInfo.JobWorkflowRef,
+		"repositoryName", jobInfo.RepositoryName,
+		"jobWorkflowRef", jobInfo.JobWorkflowRef,
 		"workflowRunId", jobInfo.WorkflowRunId,
 		"jobDisplayName", jobInfo.JobDisplayName,
-		"requestId", jobInfo.RunnerRequestId)
+		"eventName", jobInfo.EventName,
+		"requestLabels", jobInfo.RequestLabels,
+		"queueTime", jobInfo.QueueTime,
+		"runnerAssignTime", jobInfo.RunnerAssignTime,
+		"ephemeralRunnerSetName", w.config.EphemeralRunnerSetName,
+		"ephemeralRunnerSetNamespace", w.config.EphemeralRunnerSetNamespace)
 
 	original, err := json.Marshal(&v1alpha1.EphemeralRunner{})
 	if err != nil {
+		w.logger.Error(err, "❌ WORKER: FAILED TO MARSHAL EMPTY EPHEMERAL RUNNER")
 		return fmt.Errorf("failed to marshal empty ephemeral runner: %w", err)
 	}
 
@@ -122,15 +130,21 @@ func (w *Worker) HandleJobStarted(ctx context.Context, jobInfo *actions.JobStart
 		},
 	)
 	if err != nil {
+		w.logger.Error(err, "❌ WORKER: FAILED TO MARSHAL EPHEMERAL RUNNER PATCH")
 		return fmt.Errorf("failed to marshal ephemeral runner patch: %w", err)
 	}
 
 	mergePatch, err := jsonpatch.CreateMergePatch(original, patch)
 	if err != nil {
+		w.logger.Error(err, "❌ WORKER: FAILED TO CREATE MERGE PATCH")
 		return fmt.Errorf("failed to create merge patch json for ephemeral runner: %w", err)
 	}
 
-	w.logger.Info("Updating ephemeral runner with merge patch", "json", string(mergePatch))
+	w.logger.Info("🔧 WORKER: UPDATING EPHEMERAL RUNNER STATUS",
+		"runnerName", jobInfo.RunnerName,
+		"mergePatch", string(mergePatch),
+		"jobRequestId", jobInfo.RunnerRequestId,
+		"jobRepositoryName", fmt.Sprintf("%s/%s", jobInfo.OwnerName, jobInfo.RepositoryName))
 
 	patchedStatus := &v1alpha1.EphemeralRunner{}
 	err = w.clientset.RESTClient().
@@ -145,13 +159,22 @@ func (w *Worker) HandleJobStarted(ctx context.Context, jobInfo *actions.JobStart
 		Into(patchedStatus)
 	if err != nil {
 		if kerrors.IsNotFound(err) {
-			w.logger.Info("Ephemeral runner not found, skipping patching of ephemeral runner status", "runnerName", jobInfo.RunnerName)
+			w.logger.Info("⚠️ WORKER: EPHEMERAL RUNNER NOT FOUND - SKIPPING PATCH",
+				"runnerName", jobInfo.RunnerName,
+				"reason", "Runner may have been deleted or not yet created")
 			return nil
 		}
+		w.logger.Error(err, "❌ WORKER: EPHEMERAL RUNNER STATUS PATCH FAILED",
+			"runnerName", jobInfo.RunnerName,
+			"mergePatch", string(mergePatch))
 		return fmt.Errorf("could not patch ephemeral runner status, patch JSON: %s, error: %w", string(mergePatch), err)
 	}
 
-	w.logger.Info("Ephemeral runner status updated with the merge patch successfully.")
+	w.logger.Info("✅ WORKER: EPHEMERAL RUNNER STATUS UPDATED",
+		"runnerName", jobInfo.RunnerName,
+		"jobRequestId", jobInfo.RunnerRequestId,
+		"patchedJobRequestId", patchedStatus.Status.JobRequestId,
+		"patchedJobRepository", patchedStatus.Status.JobRepositoryName)
 
 	return nil
 }
@@ -164,7 +187,25 @@ func (w *Worker) HandleJobStarted(ctx context.Context, jobInfo *actions.JobStart
 // Finally, it logs the scaled ephemeral runner set details and returns nil if successful.
 // If any error occurs during the process, it returns an error with a descriptive message.
 func (w *Worker) HandleDesiredRunnerCount(ctx context.Context, count, jobsCompleted int) (int, error) {
+	w.logger.Info("🎯 WORKER: CALCULATING DESIRED RUNNER COUNT",
+		"assignedJobsCount", count,
+		"jobsCompleted", jobsCompleted,
+		"minRunners", w.config.MinRunners,
+		"maxRunners", w.config.MaxRunners,
+		"currentLastPatch", w.lastPatch,
+		"currentPatchSeq", w.patchSeq,
+		"ephemeralRunnerSetName", w.config.EphemeralRunnerSetName,
+		"ephemeralRunnerSetNamespace", w.config.EphemeralRunnerSetNamespace)
+
 	patchID := w.setDesiredWorkerState(count, jobsCompleted)
+
+	w.logger.Info("📊 WORKER: SCALING CALCULATION COMPLETE",
+		"assignedJobsCount", count,
+		"jobsCompleted", jobsCompleted,
+		"calculatedTargetRunners", w.lastPatch,
+		"patchID", patchID,
+		"minRunners", w.config.MinRunners,
+		"maxRunners", w.config.MaxRunners)
 
 	original, err := json.Marshal(
 		&v1alpha1.EphemeralRunnerSet{
@@ -175,6 +216,7 @@ func (w *Worker) HandleDesiredRunnerCount(ctx context.Context, count, jobsComple
 		},
 	)
 	if err != nil {
+		w.logger.Error(err, "❌ WORKER: FAILED TO MARSHAL EMPTY EPHEMERAL RUNNER SET")
 		return 0, fmt.Errorf("failed to marshal empty ephemeral runner set: %w", err)
 	}
 
@@ -187,17 +229,29 @@ func (w *Worker) HandleDesiredRunnerCount(ctx context.Context, count, jobsComple
 		},
 	)
 	if err != nil {
-		w.logger.Error(err, "could not marshal patch ephemeral runner set")
+		w.logger.Error(err, "❌ WORKER: FAILED TO MARSHAL PATCH EPHEMERAL RUNNER SET")
 		return 0, err
 	}
 
-	w.logger.Info("Compare", "original", string(original), "patch", string(patch))
+	w.logger.Info("🔧 WORKER: CREATING MERGE PATCH",
+		"originalReplicas", -1,
+		"targetReplicas", w.lastPatch,
+		"patchID", patchID,
+		"original", string(original),
+		"patch", string(patch))
+
 	mergePatch, err := jsonpatch.CreateMergePatch(original, patch)
 	if err != nil {
+		w.logger.Error(err, "❌ WORKER: FAILED TO CREATE MERGE PATCH")
 		return 0, fmt.Errorf("failed to create merge patch json for ephemeral runner set: %w", err)
 	}
 
-	w.logger.Info("Preparing EphemeralRunnerSet update", "json", string(mergePatch))
+	w.logger.Info("📤 WORKER: APPLYING EPHEMERAL RUNNER SET PATCH",
+		"ephemeralRunnerSetName", w.config.EphemeralRunnerSetName,
+		"ephemeralRunnerSetNamespace", w.config.EphemeralRunnerSetNamespace,
+		"mergePatch", string(mergePatch),
+		"targetReplicas", w.lastPatch,
+		"patchID", patchID)
 
 	patchedEphemeralRunnerSet := &v1alpha1.EphemeralRunnerSet{}
 	err = w.clientset.RESTClient().
@@ -210,27 +264,65 @@ func (w *Worker) HandleDesiredRunnerCount(ctx context.Context, count, jobsComple
 		Do(ctx).
 		Into(patchedEphemeralRunnerSet)
 	if err != nil {
+		w.logger.Error(err, "❌ WORKER: EPHEMERAL RUNNER SET PATCH FAILED",
+			"ephemeralRunnerSetName", w.config.EphemeralRunnerSetName,
+			"ephemeralRunnerSetNamespace", w.config.EphemeralRunnerSetNamespace,
+			"mergePatch", string(mergePatch),
+			"targetReplicas", w.lastPatch)
 		return 0, fmt.Errorf("could not patch ephemeral runner set , patch JSON: %s, error: %w", string(mergePatch), err)
 	}
 
-	w.logger.Info("Ephemeral runner set scaled.",
-		"namespace", w.config.EphemeralRunnerSetNamespace,
-		"name", w.config.EphemeralRunnerSetName,
-		"replicas", patchedEphemeralRunnerSet.Spec.Replicas,
-	)
+	w.logger.Info("✅ WORKER: EPHEMERAL RUNNER SET SCALED",
+		"ephemeralRunnerSetName", w.config.EphemeralRunnerSetName,
+		"ephemeralRunnerSetNamespace", w.config.EphemeralRunnerSetNamespace,
+		"actualReplicas", patchedEphemeralRunnerSet.Spec.Replicas,
+		"targetReplicas", w.lastPatch,
+		"patchID", patchID,
+		"actualPatchID", patchedEphemeralRunnerSet.Spec.PatchID,
+		"assignedJobsCount", count,
+		"jobsCompleted", jobsCompleted)
+
 	return w.lastPatch, nil
 }
 
 // calculateDesiredState calculates the desired state of the worker based on the desired count and the the number of jobs completed.
 func (w *Worker) setDesiredWorkerState(count, jobsCompleted int) int {
+	w.logger.Info("🧮 WORKER: STARTING CALCULATION",
+		"assignedJobs", count,
+		"jobsCompleted", jobsCompleted,
+		"minRunners", w.config.MinRunners,
+		"maxRunners", w.config.MaxRunners,
+		"currentLastPatch", w.lastPatch,
+		"currentPatchSeq", w.patchSeq)
+
 	// Max runners should always be set by the resource builder either to the configured value,
 	// or the maximum int32 (resourcebuilder.newAutoScalingListener()).
 	targetRunnerCount := min(w.config.MinRunners+count, w.config.MaxRunners)
+
+	w.logger.Info("🎯 WORKER: INITIAL TARGET CALCULATION",
+		"minRunners", w.config.MinRunners,
+		"assignedJobs", count,
+		"sum", w.config.MinRunners+count,
+		"maxRunners", w.config.MaxRunners,
+		"initialTarget", targetRunnerCount)
+
 	w.patchSeq++
 	desiredPatchID := w.patchSeq
 
 	if count == 0 && jobsCompleted == 0 { // empty batch
+		w.logger.Info("📭 WORKER: EMPTY BATCH DETECTED",
+			"assignedJobs", count,
+			"jobsCompleted", jobsCompleted,
+			"currentLastPatch", w.lastPatch,
+			"initialTarget", targetRunnerCount)
+
 		targetRunnerCount = max(w.lastPatch, targetRunnerCount)
+
+		w.logger.Info("🔄 WORKER: EMPTY BATCH TARGET ADJUSTED",
+			"adjustedTarget", targetRunnerCount,
+			"previousPatch", w.lastPatch,
+			"minRunners", w.config.MinRunners)
+
 		if targetRunnerCount == w.config.MinRunners {
 			// We have an empty batch, and the last patch was the min runners.
 			// Since this is an empty batch, and we are at the min runners, they should all be idle.
@@ -238,20 +330,28 @@ func (w *Worker) setDesiredWorkerState(count, jobsCompleted int) int {
 			// this situation allows the controller to scale down to the min runners.
 			// However, it is important to keep the patch sequence increasing so we don't ignore one batch.
 			desiredPatchID = 0
+			w.logger.Info("🔽 WORKER: EMPTY BATCH AT MIN RUNNERS - ALLOWING SCALE DOWN",
+				"targetRunnerCount", targetRunnerCount,
+				"minRunners", w.config.MinRunners,
+				"desiredPatchID", desiredPatchID,
+				"reason", "Reset patchID to allow controller scale down cleanup")
 		}
 	}
 
+	previousLastPatch := w.lastPatch
 	w.lastPatch = targetRunnerCount
 
-	w.logger.Info(
-		"Calculated target runner count",
-		"assigned job", count,
-		"decision", targetRunnerCount,
-		"min", w.config.MinRunners,
-		"max", w.config.MaxRunners,
-		"currentRunnerCount", w.lastPatch,
+	w.logger.Info("✅ WORKER: SCALING DECISION FINAL",
+		"assignedJobs", count,
 		"jobsCompleted", jobsCompleted,
-	)
+		"finalTargetRunners", targetRunnerCount,
+		"previousLastPatch", previousLastPatch,
+		"newLastPatch", w.lastPatch,
+		"desiredPatchID", desiredPatchID,
+		"patchSeq", w.patchSeq,
+		"minRunners", w.config.MinRunners,
+		"maxRunners", w.config.MaxRunners,
+		"wasEmptyBatch", count == 0 && jobsCompleted == 0)
 
 	return desiredPatchID
 }

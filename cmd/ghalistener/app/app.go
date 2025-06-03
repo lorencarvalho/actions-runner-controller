@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/actions/actions-runner-controller/apis/actions.github.com/v1alpha1"
 	"github.com/actions/actions-runner-controller/cmd/ghalistener/config"
 	"github.com/actions/actions-runner-controller/cmd/ghalistener/listener"
 	"github.com/actions/actions-runner-controller/cmd/ghalistener/metrics"
@@ -61,6 +62,11 @@ func New(config config.Config) (*App, error) {
 	}
 
 	if config.MetricsAddr != "" {
+		metricsConfig := v1alpha1.MetricsConfig{}
+		if config.Metrics != nil {
+			metricsConfig = *config.Metrics
+		}
+
 		app.metrics = metrics.NewExporter(metrics.ExporterConfig{
 			ScaleSetName:      config.EphemeralRunnerSetName,
 			ScaleSetNamespace: config.EphemeralRunnerSetNamespace,
@@ -70,7 +76,7 @@ func New(config config.Config) (*App, error) {
 			ServerAddr:        config.MetricsAddr,
 			ServerEndpoint:    config.MetricsEndpoint,
 			Logger:            app.logger.WithName("metrics exporter"),
-			Metrics:           *config.Metrics,
+			Metrics:           metricsConfig,
 		})
 	}
 

@@ -751,27 +751,91 @@ func (c *Client) doSessionRequest(ctx context.Context, method, path string, requ
 func (c *Client) AcquireJobs(ctx context.Context, runnerScaleSetId int, messageQueueAccessToken string, requestIds []int64) ([]int64, error) {
 	u := fmt.Sprintf("%s/%s/%d/acquirejobs?api-version=6.0-preview", c.ActionsServiceURL, scaleSetEndpoint, runnerScaleSetId)
 
+	c.logger.Info("🎯 GITHUB API: ACQUIRE JOBS REQUEST STARTING",
+		"url", u,
+		"runnerScaleSetId", runnerScaleSetId,
+		"requestIdsCount", len(requestIds),
+		"requestIds", fmt.Sprint(requestIds),
+		"tokenPrefix", func() string {
+			if len(messageQueueAccessToken) > 10 {
+				return messageQueueAccessToken[:10] + "..."
+			}
+			return messageQueueAccessToken
+		}())
+
 	body, err := json.Marshal(requestIds)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request ids: %w", err)
+		c.logger.Error(err, "❌ GITHUB API: FAILED TO MARSHAL REQUEST IDS", "requestIds", requestIds)
+		return nil, err
 	}
+
+	c.logger.Info("📤 GITHUB API: ACQUIRE JOBS REQUEST BODY",
+		"bodyLength", len(body),
+		"bodyContent", string(body),
+		"runnerScaleSetId", runnerScaleSetId)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewBuffer(body))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create new request with context: %w", err)
+		c.logger.Error(err, "❌ GITHUB API: FAILED TO CREATE HTTP REQUEST", "url", u)
+		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", messageQueueAccessToken))
 	req.Header.Set("User-Agent", c.userAgent.String())
 
+	c.logger.Info("📡 GITHUB API: SENDING ACQUIRE JOBS REQUEST",
+		"method", req.Method,
+		"url", req.URL.String(),
+		"headers", map[string]string{
+			"Content-Type": req.Header.Get("Content-Type"),
+			"User-Agent":   req.Header.Get("User-Agent"),
+			"Authorization": func() string {
+				auth := req.Header.Get("Authorization")
+				if len(auth) > 20 {
+					return auth[:20] + "..."
+				}
+				return auth
+			}(),
+		},
+		"runnerScaleSetId", runnerScaleSetId)
+
 	resp, err := c.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to issue the request: %w", err)
+		c.logger.Error(err, "❌ GITHUB API: ACQUIRE JOBS REQUEST FAILED", "url", u, "runnerScaleSetId", runnerScaleSetId)
+		return nil, err
 	}
 
+	c.logger.Info("📨 GITHUB API: ACQUIRE JOBS RESPONSE RECEIVED",
+		"statusCode", resp.StatusCode,
+		"status", resp.Status,
+		"contentLength", resp.ContentLength,
+		"headers", map[string]string{
+			"Content-Type":          resp.Header.Get("Content-Type"),
+			HeaderActionsActivityID: resp.Header.Get(HeaderActionsActivityID),
+			"X-RateLimit-Limit":     resp.Header.Get("X-RateLimit-Limit"),
+			"X-RateLimit-Remaining": resp.Header.Get("X-RateLimit-Remaining"),
+			"X-RateLimit-Reset":     resp.Header.Get("X-RateLimit-Reset"),
+		},
+		"url", u,
+		"runnerScaleSetId", runnerScaleSetId,
+		"requestedJobsCount", len(requestIds))
+
 	if resp.StatusCode != http.StatusOK {
+		c.logger.Info("⚠️ GITHUB API: ACQUIRE JOBS NON-200 RESPONSE",
+			"statusCode", resp.StatusCode,
+			"status", resp.Status,
+			"expectedStatusCode", http.StatusOK,
+			"runnerScaleSetId", runnerScaleSetId,
+			"requestedJobsCount", len(requestIds),
+			"url", u)
+
 		if resp.StatusCode != http.StatusUnauthorized {
+			c.logger.Error(nil, "❌ GITHUB API: ACQUIRE JOBS FAILED - NON-AUTH ERROR",
+				"statusCode", resp.StatusCode,
+				"status", resp.Status,
+				"runnerScaleSetId", runnerScaleSetId,
+				"url", u)
 			return nil, ParseActionsErrorFromResponse(resp)
 		}
 
@@ -779,12 +843,21 @@ func (c *Client) AcquireJobs(ctx context.Context, runnerScaleSetId int, messageQ
 		body, err := io.ReadAll(resp.Body)
 		body = trimByteOrderMark(body)
 		if err != nil {
+			c.logger.Error(err, "❌ GITHUB API: FAILED TO READ ERROR RESPONSE BODY",
+				"statusCode", resp.StatusCode,
+				"runnerScaleSetId", runnerScaleSetId)
 			return nil, &ActionsError{
 				ActivityID: resp.Header.Get(HeaderActionsActivityID),
 				StatusCode: resp.StatusCode,
 				Err:        err,
 			}
 		}
+
+		c.logger.Info("🔐 GITHUB API: ACQUIRE JOBS TOKEN EXPIRED",
+			"statusCode", resp.StatusCode,
+			"responseBody", string(body),
+			"activityID", resp.Header.Get(HeaderActionsActivityID),
+			"runnerScaleSetId", runnerScaleSetId)
 
 		return nil, &MessageQueueTokenExpiredError{
 			activityID: resp.Header.Get(HeaderActionsActivityID),
@@ -796,12 +869,24 @@ func (c *Client) AcquireJobs(ctx context.Context, runnerScaleSetId int, messageQ
 	var acquiredJobs *Int64List
 	err = json.NewDecoder(resp.Body).Decode(&acquiredJobs)
 	if err != nil {
+		c.logger.Error(err, "❌ GITHUB API: FAILED TO DECODE ACQUIRE JOBS RESPONSE",
+			"statusCode", resp.StatusCode,
+			"runnerScaleSetId", runnerScaleSetId)
 		return nil, &ActionsError{
 			ActivityID: resp.Header.Get(HeaderActionsActivityID),
 			StatusCode: resp.StatusCode,
 			Err:        err,
 		}
 	}
+
+	c.logger.Info("✅ GITHUB API: ACQUIRE JOBS SUCCESS",
+		"statusCode", resp.StatusCode,
+		"requestedJobsCount", len(requestIds),
+		"acquiredJobsCount", len(acquiredJobs.Value),
+		"acquiredJobs", fmt.Sprint(acquiredJobs.Value),
+		"activityID", resp.Header.Get(HeaderActionsActivityID),
+		"runnerScaleSetId", runnerScaleSetId,
+		"url", u)
 
 	return acquiredJobs.Value, nil
 }

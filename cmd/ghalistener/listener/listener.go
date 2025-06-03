@@ -188,6 +188,34 @@ func (l *Listener) handleMessage(ctx context.Context, handler Handler, msg *acti
 	}
 	l.metrics.PublishStatistics(parsedMsg.statistics)
 
+	// Proactive job acquisition: check for acquirable jobs when statistics show available or assigned jobs
+	// This matches the behavior of the original githubrunnerscalesetlistener and handles the case where
+	// GitHub Actions uses direct assignment instead of JobAvailable messages
+	if parsedMsg.statistics.TotalAvailableJobs > 0 || parsedMsg.statistics.TotalAssignedJobs > 0 {
+		if len(parsedMsg.jobsAvailable) == 0 {
+			l.logger.Info("Statistics show available or assigned jobs but no JobAvailable messages received, checking for acquirable jobs",
+				"totalAvailableJobs", parsedMsg.statistics.TotalAvailableJobs,
+				"totalAssignedJobs", parsedMsg.statistics.TotalAssignedJobs)
+
+			acquirableJobsList, err := l.client.GetAcquirableJobs(ctx, l.scaleSetID)
+			if err != nil {
+				l.logger.Info("Failed to get acquirable jobs", "error", err)
+			} else if len(acquirableJobsList.Jobs) > 0 {
+				l.logger.Info("Found acquirable jobs", "count", len(acquirableJobsList.Jobs))
+
+				// Convert acquirable jobs to JobAvailable format for consistency with existing logic
+				for _, job := range acquirableJobsList.Jobs {
+					parsedMsg.jobsAvailable = append(parsedMsg.jobsAvailable, &actions.JobAvailable{
+						AcquireJobUrl: job.AcquireJobUrl,
+						JobMessageBase: actions.JobMessageBase{
+							RunnerRequestId: job.RunnerRequestId,
+						},
+					})
+				}
+			}
+		}
+	}
+
 	if len(parsedMsg.jobsAvailable) > 0 {
 		acquiredJobIDs, err := l.acquireAvailableJobs(ctx, parsedMsg.jobsAvailable)
 		if err != nil {
@@ -263,6 +291,40 @@ func (l *Listener) createSession(ctx context.Context) error {
 	l.logger.Info("Current runner scale set statistics.", "statistics", string(statistics))
 
 	l.session = session
+
+	// Proactive initial job acquisition: check for acquirable jobs during session creation
+	// This matches the behavior of the original githubrunnerscalesetlistener
+	if session.Statistics.TotalAvailableJobs > 0 || session.Statistics.TotalAssignedJobs > 0 {
+		l.logger.Info("Initial session shows available or assigned jobs, checking for acquirable jobs",
+			"totalAvailableJobs", session.Statistics.TotalAvailableJobs,
+			"totalAssignedJobs", session.Statistics.TotalAssignedJobs)
+
+		acquirableJobsList, err := l.client.GetAcquirableJobs(ctx, l.scaleSetID)
+		if err != nil {
+			l.logger.Info("Failed to get acquirable jobs during session creation", "error", err)
+		} else if len(acquirableJobsList.Jobs) > 0 {
+			l.logger.Info("Found acquirable jobs during session creation", "count", len(acquirableJobsList.Jobs))
+
+			// Convert acquirable jobs to JobAvailable format and acquire them
+			var jobsAvailable []*actions.JobAvailable
+			for _, job := range acquirableJobsList.Jobs {
+				jobsAvailable = append(jobsAvailable, &actions.JobAvailable{
+					AcquireJobUrl: job.AcquireJobUrl,
+					JobMessageBase: actions.JobMessageBase{
+						RunnerRequestId: job.RunnerRequestId,
+					},
+				})
+			}
+
+			// Acquire the jobs found during session creation
+			acquiredJobIDs, err := l.acquireAvailableJobs(ctx, jobsAvailable)
+			if err != nil {
+				l.logger.Info("Failed to acquire jobs during session creation", "error", err)
+			} else if len(acquiredJobIDs) > 0 {
+				l.logger.Info("Jobs acquired during session creation", "count", len(acquiredJobIDs), "requestIds", fmt.Sprint(acquiredJobIDs))
+			}
+		}
+	}
 
 	return nil
 }

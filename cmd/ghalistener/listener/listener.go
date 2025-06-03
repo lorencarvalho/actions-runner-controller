@@ -212,6 +212,8 @@ func (l *Listener) handleMessage(ctx context.Context, handler Handler, msg *acti
 						},
 					})
 				}
+			} else {
+				l.logger.Info("GetAcquirableJobs returned empty list", "totalJobs", len(acquirableJobsList.Jobs))
 			}
 		}
 	}
@@ -323,6 +325,8 @@ func (l *Listener) createSession(ctx context.Context) error {
 			} else if len(acquiredJobIDs) > 0 {
 				l.logger.Info("Jobs acquired during session creation", "count", len(acquiredJobIDs), "requestIds", fmt.Sprint(acquiredJobIDs))
 			}
+		} else {
+			l.logger.Info("GetAcquirableJobs returned empty list during session creation", "totalJobs", len(acquirableJobsList.Jobs))
 		}
 	}
 

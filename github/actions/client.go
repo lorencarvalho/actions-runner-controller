@@ -810,7 +810,14 @@ func (c *Client) GetAcquirableJobs(ctx context.Context, runnerScaleSetId int) (*
 		return nil, err
 	}
 
-	c.logger.Info("GetAcquirableJobs API request", "url", req.URL.String(), "method", req.Method)
+	c.logger.Info("GetAcquirableJobs API request",
+		"url", req.URL.String(),
+		"method", req.Method,
+		"actionsServiceURL", c.ActionsServiceURL,
+		"adminTokenPrefix", func() string {
+			return c.ActionsServiceAdminToken
+		}(),
+		"authHeader", req.Header.Get("Authorization"))
 
 	resp, err := c.Do(req)
 	if err != nil {
@@ -1276,6 +1283,13 @@ func (c *Client) updateTokenIfNeeded(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to get admin token expire at on refresh: %w", err)
 	}
+
+	c.logger.Info("token refreshed successfully",
+		"actionsServiceURL", c.ActionsServiceURL,
+		"adminTokenPrefix", func() string {
+			return c.ActionsServiceAdminToken
+		}(),
+		"expiresAt", c.ActionsServiceAdminTokenExpiresAt)
 
 	return nil
 }

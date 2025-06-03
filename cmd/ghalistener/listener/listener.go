@@ -285,7 +285,7 @@ func (l *Listener) createSession(ctx context.Context) error {
 }
 
 func (l *Listener) getMessage(ctx context.Context) (*actions.RunnerScaleSetMessage, error) {
-	l.logger.Info("Getting next message FOR REAL FOR REAL", "lastMessageID", l.lastMessageID)
+	l.logger.Info("Getting next message", "lastMessageID", l.lastMessageID)
 	msg, err := l.client.GetMessage(ctx, l.session.MessageQueueUrl, l.session.MessageQueueAccessToken, l.lastMessageID, l.maxCapacity)
 	if err == nil { // if NO error
 		return msg, nil

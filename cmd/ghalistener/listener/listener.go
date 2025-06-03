@@ -197,13 +197,23 @@ func (l *Listener) handleMessage(ctx context.Context, handler Handler, msg *acti
 				"totalAvailableJobs", parsedMsg.statistics.TotalAvailableJobs,
 				"totalAssignedJobs", parsedMsg.statistics.TotalAssignedJobs)
 
+			l.logger.Info("Calling GitHub API GetAcquirableJobs", "scaleSetID", l.scaleSetID)
 			acquirableJobsList, err := l.client.GetAcquirableJobs(ctx, l.scaleSetID)
-			l.logger.Info("GetAcquirableJobs call completed", "error", err, "jobCount", func() int {
-				if acquirableJobsList != nil {
-					return len(acquirableJobsList.Jobs)
-				}
-				return -1
-			}())
+			l.logger.Info("GetAcquirableJobs API call completed",
+				"scaleSetID", l.scaleSetID,
+				"error", err,
+				"jobCount", func() int {
+					if acquirableJobsList != nil {
+						return len(acquirableJobsList.Jobs)
+					}
+					return -1
+				}(),
+				"totalCount", func() int {
+					if acquirableJobsList != nil {
+						return acquirableJobsList.Count
+					}
+					return -1
+				}())
 
 			if err != nil {
 				l.logger.Info("Failed to get acquirable jobs", "error", err)
@@ -308,13 +318,23 @@ func (l *Listener) createSession(ctx context.Context) error {
 			"totalAvailableJobs", session.Statistics.TotalAvailableJobs,
 			"totalAssignedJobs", session.Statistics.TotalAssignedJobs)
 
+		l.logger.Info("Calling GitHub API GetAcquirableJobs during session creation", "scaleSetID", l.scaleSetID)
 		acquirableJobsList, err := l.client.GetAcquirableJobs(ctx, l.scaleSetID)
-		l.logger.Info("GetAcquirableJobs call completed during session creation", "error", err, "jobCount", func() int {
-			if acquirableJobsList != nil {
-				return len(acquirableJobsList.Jobs)
-			}
-			return -1
-		}())
+		l.logger.Info("GetAcquirableJobs API call completed during session creation",
+			"scaleSetID", l.scaleSetID,
+			"error", err,
+			"jobCount", func() int {
+				if acquirableJobsList != nil {
+					return len(acquirableJobsList.Jobs)
+				}
+				return -1
+			}(),
+			"totalCount", func() int {
+				if acquirableJobsList != nil {
+					return acquirableJobsList.Count
+				}
+				return -1
+			}())
 
 		if err != nil {
 			l.logger.Info("Failed to get acquirable jobs during session creation", "error", err)

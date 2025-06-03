@@ -810,10 +810,15 @@ func (c *Client) GetAcquirableJobs(ctx context.Context, runnerScaleSetId int) (*
 		return nil, err
 	}
 
+	c.logger.Info("GetAcquirableJobs API request", "url", req.URL.String(), "method", req.Method)
+
 	resp, err := c.Do(req)
 	if err != nil {
+		c.logger.Info("GetAcquirableJobs API request failed", "url", req.URL.String(), "error", err)
 		return nil, err
 	}
+
+	c.logger.Info("GetAcquirableJobs API response", "url", req.URL.String(), "statusCode", resp.StatusCode)
 
 	if resp.StatusCode == http.StatusNoContent {
 		defer resp.Body.Close()
@@ -833,6 +838,8 @@ func (c *Client) GetAcquirableJobs(ctx context.Context, runnerScaleSetId int) (*
 			Err:        err,
 		}
 	}
+
+	c.logger.Info("GetAcquirableJobs API response decoded", "url", req.URL.String(), "count", acquirableJobList.Count, "jobsLength", len(acquirableJobList.Jobs))
 
 	return acquirableJobList, nil
 }

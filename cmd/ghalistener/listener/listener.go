@@ -198,6 +198,13 @@ func (l *Listener) handleMessage(ctx context.Context, handler Handler, msg *acti
 				"totalAssignedJobs", parsedMsg.statistics.TotalAssignedJobs)
 
 			acquirableJobsList, err := l.client.GetAcquirableJobs(ctx, l.scaleSetID)
+			l.logger.Info("GetAcquirableJobs call completed", "error", err, "jobCount", func() int {
+				if acquirableJobsList != nil {
+					return len(acquirableJobsList.Jobs)
+				}
+				return -1
+			}())
+
 			if err != nil {
 				l.logger.Info("Failed to get acquirable jobs", "error", err)
 			} else if len(acquirableJobsList.Jobs) > 0 {
@@ -302,6 +309,13 @@ func (l *Listener) createSession(ctx context.Context) error {
 			"totalAssignedJobs", session.Statistics.TotalAssignedJobs)
 
 		acquirableJobsList, err := l.client.GetAcquirableJobs(ctx, l.scaleSetID)
+		l.logger.Info("GetAcquirableJobs call completed during session creation", "error", err, "jobCount", func() int {
+			if acquirableJobsList != nil {
+				return len(acquirableJobsList.Jobs)
+			}
+			return -1
+		}())
+
 		if err != nil {
 			l.logger.Info("Failed to get acquirable jobs during session creation", "error", err)
 		} else if len(acquirableJobsList.Jobs) > 0 {
